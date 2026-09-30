@@ -30,29 +30,22 @@
 
   <script type="module">
     import * as PIXI from "https://esm.sh/pixi.js@8";
-    import { getAvatar } from "https://esm.sh/gavatar@latest/client";
     import { renderIcon } from "https://esm.sh/gavatar@latest";
-
+  
     const params = new URLSearchParams(window.location.search);
-    const username = params.get("user") || "RobTop";
     const form = params.get("form") || "cube";
-
+    const iconID = parseInt(params.get("icon"));
+    const col1 = parseInt(params.get("col1"));
+    const col2 = parseInt(params.get("col2"));
+    const glow = params.get("glow") === "true";
+  
     async function main() {
-      const avatar = await getAvatar(username, form);
-
-      const canvas = await renderIcon(PIXI, {
-        form: avatar.form,
-        iconID: avatar.iconID,
-        col1: avatar.col1,
-        col2: avatar.col2,
-        glow: avatar.glow
-      });
-
+      const canvas = await renderIcon(PIXI, { form, iconID, col1, col2, glow });
       canvas.style.width = "150px";
       canvas.style.height = "150px";
       document.getElementById("iconWrap").appendChild(canvas);
     }
-
+  
     main();
   </script>
 </body>
