@@ -13,143 +13,33 @@
 <div id="iconWrap"></div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/8.0.0/pixi.min.js"></script>
 <script>
-const WHITE = 0xffffff;
-const formMap = { cube:"player", ball:"player_ball", ufo:"bird", wave:"dart", ship:"ship", swing:"swing", jetpack:"jetpack", robot:"robot", spider:"spider" };
-const COMPLEX_FORMS = ["robot", "spider"];
-
-function padZero(num){ num = +num; return num < 10 ? "0"+num : ""+num; }
-function parseWeirdArray(data){ return data.replace(/[^0-9,-.]/g,"").split(",").map(x=>+x); }
-
-function parsePlist(xmlText){
-  let dom = new DOMParser().parseFromString(xmlText, "text/xml");
-  let frames = dom.children[0].children[0].children[1].children;
-  let pos = {};
-  for (let i=0;i<frames.length;i+=2){
-    let name = frames[i].innerHTML;
-    let data = frames[i+1].children;
-    let rotated = false;
-    pos[name] = {};
-    for (let n=0;n<data.length;n+=2){
-      let key = data[n].innerHTML;
-      let val = data[n+1].innerHTML;
-      if (key === "spriteOffset") pos[name].spriteOffset = parseWeirdArray(val);
-      if (key === "textureRotated") rotated = data[n+1].outerHTML.includes("true");
-      if (key === "textureRect"){
-        let arr = val.slice(1,-1).split("},{").map(x=>parseWeirdArray(x));
-        pos[name].pos = arr[0];
-        pos[name].size = arr[1];
-      }
-    }
-    if (rotated) pos[name].size.reverse();
-  }
-  return pos;
-}
-
-function makePartSprite(texture, bounds, tint){
-  const rect = new PIXI.Rectangle(bounds.pos[0], bounds.pos[1], bounds.size[0], bounds.size[1]);
-  const partTexture = new PIXI.Texture({ source: texture.source, frame: rect });
-  const sprite = new PIXI.Sprite(partTexture);
-  sprite.tint = tint;
-  sprite.anchor.set(0.5);
-  sprite.x = (bounds.spriteOffset ? bounds.spriteOffset[0] : 0);
-  sprite.y = -(bounds.spriteOffset ? bounds.spriteOffset[1] : 0);
-  return sprite;
-}
-
 async function main(){
   const params = new URLSearchParams(window.location.search);
   const type = params.get("form") || "cube";
-  const id = parseInt(params.get("icon"));
-  const col1 = parseInt(params.get("col1"));
-  const col2 = parseInt(params.get("col2"));
+  const id = params.get("icon") || "1";
+  const col1 = params.get("col1") || "0";
+  const col2 = params.get("col2") || "0";
   const glowOn = params.get("glow") === "true";
 
-  const apiRes = await fetch("https://gdbrowser.com/api/iconkit");
-  const apiData = await apiRes.json();
-  const colors = apiData.colors;
-  function toHex(colID){
-    let c = colors[colID];
-    return c ? (c.r<<16)+(c.g<<8)+c.b : WHITE;
-  }
-
-  const form = formMap[type.toLowerCase()] || type.toLowerCase();
-  const iconStr = `${form}_${padZero(id)}`;
-
+  // Create the PIXI Application
   const app = new PIXI.Application();
   await app.init({ width:150, height:150, backgroundAlpha:0 });
   document.getElementById("iconWrap").appendChild(app.canvas);
 
-  const container = new PIXI.Container();
+  // Dynamically request GDBrowser's rendered icon image
+  const gdbrowserUrl = `https://gdbrowser.com/icon/icon?form=${type}&icon=${id}&col1=${col1}&col2=${col2}&glow=${glowOn}`;
 
-  if (COMPLEX_FORMS.includes(form)) {
-    const robotData = apiData.robotAnimations;
-    const animSet = robotData.animations[form];
-    const animName = animSet.idle ? "idle" : "run";
-    const poseFrame = animSet[animName].frames[0];
-
-    for (let i = 0; i < poseFrame.length; i++) {
-      const partData = poseFrame[i];
-
-      // Extract part number safely with fallback to loop index (1-based)
-      const rawPartNum = partData.part ?? partData.p ?? (Array.isArray(partData) ? partData[0] : null) ?? (i + 1);
-      const partNum = padZero(rawPartNum);
-      const partIconStr = `${iconStr}_${partNum}`;
-
-      // Proxied fetch to bypass GDBrowser's CORS restrictions on static .plist files
-      const plistUrl = `https://gdbrowser.com/iconkit/icons/${partIconStr}-uhd.plist`;
-      const plistRes = await fetch(`https://corsproxy.io/?${encodeURIComponent(plistUrl)}`);
-      if (!plistRes.ok) continue;
-
-      const framePos = parsePlist(await plistRes.text());
-      const texture = await PIXI.Assets.load(`https://gdbrowser.com/iconkit/icons/${partIconStr}-uhd.png`);
-
-      [
-        { suffix: "_001.png", color: toHex(col1) },
-        { suffix: "_2_001.png", color: toHex(col2) }
-      ].forEach(layer => {
-        const frameName = partIconStr + layer.suffix;
-        const bounds = framePos[frameName];
-        if (!bounds) return;
-
-        const posX = partData.pos ? partData.pos[0] : (partData.x || 0);
-        const posY = partData.pos ? partData.pos[1] : (partData.y || 0);
-        const scaleX = partData.scale ? partData.scale[0] : (partData.scaleX || 1);
-        const scaleY = partData.scale ? partData.scale[1] : (partData.scaleY || 1);
-        const flipX = partData.flipped ? partData.flipped[0] : partData.flipX;
-        const flipY = partData.flipped ? partData.flipped[1] : partData.flipY;
-        const rot = partData.rotation ?? partData.r ?? 0;
-
-        const sprite = makePartSprite(texture, bounds, layer.color);
-        sprite.x += posX;
-        sprite.y -= posY;
-        sprite.scale.x = scaleX * (flipX ? -1 : 1);
-        sprite.scale.y = scaleY * (flipY ? -1 : 1);
-        sprite.angle = -rot;
-        container.addChild(sprite);
-      });
-    }
-  } else {
-    // Simple single-layer forms
-    const plistRes = await fetch(`https://gdbrowser.com/iconkit/icons/${iconStr}-uhd.plist`);
-    const framePos = parsePlist(await plistRes.text());
-    const texture = await PIXI.Assets.load(`https://gdbrowser.com/iconkit/icons/${iconStr}-uhd.png`);
-
-    [
-      { suffix: "_glow_001.png", color: glowOn ? toHex(col2) : null },
-      { suffix: "_2_001.png", color: toHex(col2) },
-      { suffix: "_001.png", color: toHex(col1) }
-    ].forEach(layer => {
-      if (layer.color === null) return;
-      const frameName = iconStr + layer.suffix;
-      const bounds = framePos[frameName];
-      if (!bounds) return;
-      container.addChild(makePartSprite(texture, bounds, layer.color));
-    });
+  try {
+    const texture = await PIXI.Assets.load(gdbrowserUrl);
+    const sprite = new PIXI.Sprite(texture);
+    sprite.anchor.set(0.5);
+    sprite.x = 75;
+    sprite.y = 75;
+    
+    app.stage.addChild(sprite);
+  } catch (err) {
+    console.error("Failed to load icon image:", err);
   }
-
-  container.x = 75; container.y = 75;
-  container.angle = -90;
-  app.stage.addChild(container);
 }
 
 main();
