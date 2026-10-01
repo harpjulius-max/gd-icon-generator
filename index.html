@@ -58,14 +58,15 @@ async function main() {
   if (username) {
     targetUrl = `https://gdbrowser.com/icon/${encodeURIComponent(username)}`;
   } else {
-    targetUrl = `https://gdbrowser.com/icon/icon?form=${type}&icon=${id}&col1=${col1}&col2=${col2}&glow=${glowOn}`;
+    // Pass both col1/col2 and color1/color2 formats to guarantee backend recognition
+    targetUrl = `https://gdbrowser.com/icon/icon?form=${type}&icon=${id}&col1=${col1}&col2=${col2}&color1=${col1}&color2=${col2}&glow=${glowOn}`;
   }
 
-  // Pre-fetch trigger to ask GDBrowser to render & cache the icon server-side
+  // Pre-fetch trigger request
   try {
     await fetch(targetUrl, { mode: 'no-cors' });
   } catch (e) {
-    // Ignore fetch restrictions; server receives trigger request
+    // Ignore trigger fetch error
   }
 
   // Set image source
