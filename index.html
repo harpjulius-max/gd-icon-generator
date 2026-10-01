@@ -1,52 +1,107 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <meta charset="UTF-8">
-  <title>GD Icon Render</title>
-  <style>
-    html, body {
-      margin: 0;
-      padding: 0;
-      width: 300px;
-      height: 300px;
-      background: #000000;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      overflow: hidden;
-    }
-    #iconWrap {
-      animation: bob 1.6s ease-in-out infinite;
-    }
-    @keyframes bob {
-      0%   { transform: translateY(0px); }
-      50%  { transform: translateY(-15px); }
-      100% { transform: translateY(0px); }
-    }
-  </style>
+<meta charset="UTF-8">
+<title>GD Icon Render</title>
+<style>
+  html, body { margin:0; padding:0; width:300px; height:300px; background:#000; display:flex; align-items:center; justify-content:center; overflow:hidden; }
+  #iconWrap { animation: bob 1.6s ease-in-out infinite; }
+  @keyframes bob { 0%{transform:translateY(0px);} 50%{transform:translateY(-15px);} 100%{transform:translateY(0px);} }
+</style>
 </head>
 <body>
-  <div id="iconWrap"></div>
+<div id="iconWrap"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/8.0.0/pixi.min.js"></script>
+<script>
+const WHITE = 0xffffff;
+const formMap = { cube:"player", ball:"player_ball", ufo:"bird", wave:"dart", ship:"ship", swing:"swing", jetpack:"jetpack" };
+const PROXY = "https://corsproxy.io/?url=";
 
-  <script type="module">
-    import * as PIXI from "https://esm.sh/pixi.js@8";
-    import { renderIcon } from "https://esm.sh/gavatar@latest";
-  
-    const params = new URLSearchParams(window.location.search);
-    const form = params.get("form") || "cube";
-    const iconID = parseInt(params.get("icon"));
-    const col1 = parseInt(params.get("col1"));
-    const col2 = parseInt(params.get("col2"));
-    const glow = params.get("glow") === "true";
-  
-    async function main() {
-      const canvas = await renderIcon(PIXI, { form, iconID, col1, col2, glow });
-      canvas.style.width = "150px";
-      canvas.style.height = "150px";
-      document.getElementById("iconWrap").appendChild(canvas);
+function padZero(num){ num = +num; return num < 10 ? "0"+num : ""+num; }
+
+function parseWeirdArray(data){ return data.replace(/[^0-9,-.]/g,"").split(",").map(x=>+x); }
+
+function parsePlist(xmlText){
+  let dom = new DOMParser().parseFromString(xmlText, "text/xml");
+  let frames = dom.children[0].children[0].children[1].children;
+  let pos = {};
+  for (let i=0;i<frames.length;i+=2){
+    let name = frames[i].innerHTML;
+    let data = frames[i+1].children;
+    let rotated = false;
+    pos[name] = {};
+    for (let n=0;n<data.length;n+=2){
+      let key = data[n].innerHTML;
+      let val = data[n+1].innerHTML;
+      if (key === "spriteOffset") pos[name].spriteOffset = parseWeirdArray(val);
+      if (key === "textureRotated") rotated = data[n+1].outerHTML.includes("true");
+      if (key === "textureRect"){
+        let arr = val.slice(1,-1).split("},{").map(x=>parseWeirdArray(x));
+        pos[name].pos = arr[0];
+        pos[name].size = arr[1];
+      }
     }
-  
-    main();
-  </script>
+    if (rotated) pos[name].size.reverse();
+  }
+  return pos;
+}
+
+async function main(){
+  const params = new URLSearchParams(window.location.search);
+  const type = params.get("form") || "cube";
+  const id = parseInt(params.get("icon"));
+  const col1 = parseInt(params.get("col1"));
+  const col2 = parseInt(params.get("col2"));
+  const glowOn = params.get("glow") === "true";
+
+  const colorRes = await fetch("https://gdbrowser.com/api/iconkit");
+  const colorData = await colorRes.json();
+  const colors = colorData.colors;
+  function toHex(colID){
+    let c = colors[colID];
+    return c ? (c.r<<16)+(c.g<<8)+c.b : WHITE;
+  }
+
+  const form = formMap[type.toLowerCase()] || type.toLowerCase();
+  const iconStr = `${form}_${padZero(id)}`;
+
+  const plistRes = await fetch(PROXY + encodeURIComponent(`https://gdbrowser.com/iconkit/icons/${iconStr}-uhd.plist`));
+  const plistText = await plistRes.text();
+  const framePos = parsePlist(plistText);
+
+  const app = new PIXI.Application();
+  await app.init({ width:150, height:150, backgroundAlpha:0 });
+  document.getElementById("iconWrap").appendChild(app.canvas);
+
+  const texture = await PIXI.Assets.load(PROXY + encodeURIComponent(`https://gdbrowser.com/iconkit/icons/${iconStr}-uhd.png`));
+
+  const layerKeys = [
+    { suffix: "_glow_001.png", color: glowOn ? toHex(col2) : null },
+    { suffix: "_2_001.png", color: toHex(col2) },
+    { suffix: "_001.png", color: toHex(col1) }
+  ];
+
+  const container = new PIXI.Container();
+  layerKeys.forEach(layer => {
+    if (layer.color === null) return;
+    const frameName = iconStr + layer.suffix;
+    const bounds = framePos[frameName];
+    if (!bounds) return;
+    const rect = new PIXI.Rectangle(bounds.pos[0], bounds.pos[1], bounds.size[0], bounds.size[1]);
+    const partTexture = new PIXI.Texture({ source: texture.source, frame: rect });
+    const sprite = new PIXI.Sprite(partTexture);
+    sprite.tint = layer.color;
+    sprite.anchor.set(0.5);
+    sprite.x = (bounds.spriteOffset ? bounds.spriteOffset[0] : 0);
+    sprite.y = -(bounds.spriteOffset ? bounds.spriteOffset[1] : 0);
+    container.addChild(sprite);
+  });
+
+  container.x = 75; container.y = 75;
+  app.stage.addChild(container);
+}
+
+main();
+</script>
 </body>
 </html>
