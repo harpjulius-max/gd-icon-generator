@@ -18,7 +18,7 @@ const WHITE = 0xffffff;
 const formMap = { cube:"player", ball:"player_ball", ufo:"bird", wave:"dart", ship:"ship", swing:"swing", jetpack:"jetpack", robot:"robot", spider:"spider" };
 const COMPLEX_FORMS = ["robot", "spider"];
 const BASE = "https://gdbrowser.com/iconkit/icons/";
-
+ 
 // Tuning values, overridable from the URL (e.g. &scale=3&rotmode=6&dome=1)
 const Q = new URLSearchParams(window.location.search);
 const num = (k, d) => Q.has(k) ? parseFloat(Q.get(k)) : d;
@@ -30,11 +30,14 @@ const SHOW_DOME   = Q.get("dome") === "1"; // draw the _3_001 layer (ship/ufo gl
 const CANVAS      = num("canvas", 270);    // canvas size in px (page is 300 tall, bob moves up 15)
 const PAD         = num("pad", 6);         // keep-clear margin so nothing touches the edge
 const ZOOM        = num("zoom", 1);        // optional manual size multiplier
-
+if (/^[0-9a-fA-F]{6}$/.test(Q.get("bg") || "")) {  // &bg=ffffff changes the background
+  document.documentElement.style.background = document.body.style.background = "#" + Q.get("bg");
+}
+ 
 // ---------- helpers ----------
 function padZero(num){ num = +num; return num < 10 ? "0"+num : ""+num; }
 function parseWeirdArray(data){ return data.replace(/[^0-9,-.]/g,"").split(",").map(x=>+x); }
-
+ 
 function parsePlist(xmlText){
   let dom = new DOMParser().parseFromString(xmlText, "text/xml");
   let frames = dom.children[0].children[0].children[1].children;
@@ -61,7 +64,7 @@ function parsePlist(xmlText){
   }
   return pos;
 }
-
+ 
 // One sprite for any frame. Each frame's own textureRotated flag decides
 // whether it needs un-rotating, so no per-icon angle hacks are needed.
 function makeSprite(texture, b, tint){
@@ -75,7 +78,7 @@ function makeSprite(texture, b, tint){
   s.y = -(b.spriteOffset ? b.spriteOffset[1] : 0);
   return s;
 }
-
+ 
 // Which sheet image (01-04) a named robot/spider part uses.
 function partFileNum(name){
   const n = (name || "").toLowerCase();
@@ -85,14 +88,14 @@ function partFileNum(name){
   if (n.includes("foot")) return 4;
   return 1;
 }
-
+ 
 // Darken a color (amt 0-255) for back parts
 function shade(color, amt){
   const k = amt / 255;
   const r = ((color >> 16) & 255) * k, g = ((color >> 8) & 255) * k, b = (color & 255) * k;
   return (Math.round(r) << 16) + (Math.round(g) << 8) + Math.round(b);
 }
-
+ 
 // ---------- main ----------
 async function main(){
   const type = Q.get("form") || "cube";
@@ -100,7 +103,7 @@ async function main(){
   const col1 = parseInt(Q.get("col1"));
   const col2 = parseInt(Q.get("col2"));
   const glowOn = Q.get("glow") === "true";
-
+ 
   const apiRes = await fetch("https://gdbrowser.com/api/iconkit");
   const apiData = await apiRes.json();
   const colors = apiData.colors;
@@ -108,21 +111,21 @@ async function main(){
     let c = colors[colID];
     return c ? (c.r<<16)+(c.g<<8)+c.b : WHITE;
   }
-
+ 
   const form = formMap[type.toLowerCase()] || type.toLowerCase();
   const iconStr = `${form}_${padZero(id)}`;
-
+ 
   const app = new PIXI.Application();
   await app.init({ width:CANVAS, height:CANVAS, backgroundAlpha:0 });
   document.getElementById("iconWrap").appendChild(app.canvas);
-
+ 
   const container = new PIXI.Container();
-
+ 
   const plistRes = await fetch(`${BASE}${iconStr}-uhd.plist`);
   const framePos = parsePlist(await plistRes.text());
   const texture = await PIXI.Assets.load(`${BASE}${iconStr}-uhd.png`);
   console.log("frames:", Object.entries(framePos).map(([k,v]) => k + (v.rotated ? " (rotated)" : "")).join(", "));
-
+ 
   // Layers for one part, back to front. Glow is returned separately.
   function layersFor(base, tintAmt){
     const out = { glow: [], body: [] };
@@ -137,22 +140,22 @@ async function main(){
     add(out.body, "_extra_001.png", WHITE); // eyes / small details, never tinted
     return out;
   }
-
+ 
   const glowLayer = new PIXI.Container();
   const bodyLayer = new PIXI.Container();
-
+ 
   if (COMPLEX_FORMS.includes(form)){
     const robotData = apiData.robotAnimations;
     const info = robotData.info[form];
     const animSet = robotData.animations[form];
     const poseFrame = animSet[animSet.idle ? "idle" : "run"].frames[0];
     console.log("first part data:", JSON.stringify(poseFrame[0]), "count:", poseFrame.length);
-
+ 
     poseFrame.forEach((partData, i) => {
       const base = `${iconStr}_${padZero(partFileNum(info.names[i]))}`;
       const tintAmt = info.tints && info.tints[i] ? info.tints[i] : 255;
       const layers = layersFor(base, tintAmt);
-
+ 
       const place = () => {
         const c = new PIXI.Container();
         c.x = partData.pos[0] * SHEET_SCALE;
@@ -173,11 +176,11 @@ async function main(){
     layers.glow.forEach(s => glowLayer.addChild(s));
     layers.body.forEach(s => bodyLayer.addChild(s));
   }
-
+ 
   container.addChild(glowLayer, bodyLayer);
   container.x = CANVAS / 2; container.y = CANVAS / 2;
   container.angle = ANGLE;
-
+ 
   // Auto-fit: only ever shrinks, so relative sizes between forms stay consistent,
   // but nothing can overflow the canvas.
   const lb = container.getLocalBounds();
@@ -186,9 +189,11 @@ async function main(){
   container.scale.set(fit * ZOOM);
   console.log("fit scale:", fit, "reach:", reach);
   app.stage.addChild(container);
+  window.__ready = true; // lets the GIF renderer know drawing is finished
 }
-
-main();
+ 
+main().catch(e => { console.error(e); window.__ready = "error"; });
 </script>
 </body>
 </html>
+ 
