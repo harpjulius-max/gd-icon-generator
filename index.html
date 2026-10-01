@@ -55,7 +55,7 @@ const formMap = {
 const COMPLEX_FORMS = ["robot", "spider"];
 const VEHICLE_FORMS = ["ship", "bird", "jetpack"];
 
-const cubeOffsets = {
+const vehicleOffsets = {
   ship: { x: 0, y: 12, scale: 0.55 },
   bird: { x: 0, y: 16, scale: 0.55 },
   jetpack: { x: 8, y: 4, scale: 0.60 }
@@ -89,7 +89,7 @@ function parsePlist(xmlText){
   return pos;
 }
 
-// Crisp tinting algorithm: draws texture tint under black outlines cleanly
+// Applies color strictly inside the sprite while keeping black outlines intact underneath
 function getTintedFrameCanvas(atlasImg, bounds, colorHex){
   const [rx, ry] = bounds.pos;
   const [atlasW, atlasH] = bounds.size;
@@ -122,15 +122,15 @@ function getTintedFrameCanvas(atlasImg, bounds, colorHex){
   tinted.height = destH;
   const tCtx = tinted.getContext("2d");
 
-  // Fill tint layer
+  // Paint the tint color
   tCtx.fillStyle = colorHex;
   tCtx.fillRect(0, 0, destW, destH);
 
-  // Mask color strictly within non-transparent sprite pixels
+  // Mask color to non-transparent pixels only
   tCtx.globalCompositeOperation = "destination-in";
   tCtx.drawImage(crop, 0, 0);
 
-  // Draw black outlines & extra details on top of color fill
+  // Blend original outlines and details back on top via multiply
   tCtx.globalCompositeOperation = "multiply";
   tCtx.drawImage(crop, 0, 0);
 
@@ -209,34 +209,40 @@ async function main(){
   ctx.save();
   ctx.translate(150, 150);
 
-  // --- ROBOT & SPIDER SKELETAL TREE RENDERING ---
+  // --- COMPLEX FORMS (ROBOT / SPIDER) ---
   if (COMPLEX_FORMS.includes(type) && robotData && robotData.animations[type]) {
     const info = robotData.info[type] || {};
     const animation = robotData.animations[type];
     const idleAnim = animation.idle || animation.run || Object.values(animation)[0];
     const partFrames = (idleAnim && idleAnim.frames && idleAnim.frames.length > 0) ? idleAnim.frames[0] : [];
 
-    // Construct parent-child joint tree hierarchy
-    const parentList = info.parents || partFrames.map(p => (p.parent !== undefined ? p.parent : -1));
-    const childrenMap = {};
-    const rootIndices = [];
+    const sortedParts = partFrames
+      .map((part, originalIdx) => ({ ...part, originalIdx }))
+      .sort((a, b) => (a.z ?? 0) - (b.z ?? 0));
 
-    parentList.forEach((pIdx, i) => {
-      if (pIdx === -1 || pIdx === null || pIdx === undefined || pIdx === i) {
-        rootIndices.push(i);
-      } else {
-        if (!childrenMap[pIdx]) childrenMap[pIdx] = [];
-        childrenMap[pIdx].push(i);
-      }
-    });
+    // Render Glow Pass
+    if (glowOn) {
+      sortedParts.forEach(partData => {
+        const partNum = padZero(partData.part || (partData.originalIdx + 1));
+        const frameName = `${iconStr}_${partNum}_glow_001.png`;
+        if (!framePos[frameName]) return;
 
-    // Recursive drawing function traversing joint nodes from parents to limbs
-    function drawNode(partIndex) {
-      const partData = partFrames[partIndex];
-      if (!partData || !partData.pos) return;
+        ctx.save();
+        ctx.translate(partData.pos[0] * 2, -partData.pos[1] * 2);
+        ctx.rotate((partData.rotation * Math.PI) / 180);
+        const flipX = partData.flipped && partData.flipped[0] ? -1 : 1;
+        const flipY = partData.flipped && partData.flipped[1] ? -1 : 1;
+        ctx.scale((partData.scale ? partData.scale[0] : 1) * flipX, (partData.scale ? partData.scale[1] : 1) * flipY);
 
-      const partNum = padZero(partData.part || (partIndex + 1));
-      const tintOverride = info.tints ? info.tints[partIndex] : null;
+        drawLayerFrame(ctx, frameName, framePos, atlasImg, secColor);
+        ctx.restore();
+      });
+    }
+
+    // Render Body Parts Pass
+    sortedParts.forEach(partData => {
+      const partNum = padZero(partData.part || (partData.originalIdx + 1));
+      const tintOverride = info.tints ? info.tints[partData.originalIdx] : null;
 
       let pColor = baseColor;
       let sColor = secColor;
@@ -244,48 +250,35 @@ async function main(){
       if (tintOverride === 2) pColor = secColor;
 
       ctx.save();
-      // Translate along parent joint node tree
-      ctx.translate(partData.pos[0], -partData.pos[1]);
+      ctx.translate(partData.pos[0] * 2, -partData.pos[1] * 2);
       ctx.rotate((partData.rotation * Math.PI) / 180);
-      
       const flipX = partData.flipped && partData.flipped[0] ? -1 : 1;
       const flipY = partData.flipped && partData.flipped[1] ? -1 : 1;
       ctx.scale((partData.scale ? partData.scale[0] : 1) * flipX, (partData.scale ? partData.scale[1] : 1) * flipY);
 
-      // Render Glow (if enabled)
-      if (glowOn) {
-        drawLayerFrame(ctx, `${iconStr}_${partNum}_glow_001.png`, framePos, atlasImg, secColor);
-      }
-
-      // Render Base, Secondary, and White Detail layers
       drawLayerFrame(ctx, `${iconStr}_${partNum}_001.png`, framePos, atlasImg, pColor);
       drawLayerFrame(ctx, `${iconStr}_${partNum}_2_001.png`, framePos, atlasImg, sColor);
       drawLayerFrame(ctx, `${iconStr}_${partNum}_extra_001.png`, framePos, atlasImg, WHITE);
 
-      // Traverse through child limbs
-      const children = childrenMap[partIndex] || [];
-      children.forEach(childIdx => drawNode(childIdx));
-
       ctx.restore();
-    }
-
-    // Execute root nodes traversal
-    rootIndices.forEach(rootIdx => drawNode(rootIdx));
+    });
 
   } else {
     // --- SIMPLE FORMS & VEHICLES ---
-    const vehicleOffset = cubeOffsets[form];
+    const vOffset = vehicleOffsets[form];
 
+    // Glow layer
     drawLayerFrame(ctx, `${iconStr}_glow_001.png`, framePos, atlasImg, glowOn ? secColor : null);
 
-    if (showCube && VEHICLE_FORMS.includes(form) && vehicleOffset) {
+    // Inner vehicle cube driver
+    if (showCube && VEHICLE_FORMS.includes(form) && vOffset) {
       try {
         const secCubeStr = `player_${padZero(cubeId)}`;
         const secSheet = await loadSpriteSheet(secCubeStr);
 
         ctx.save();
-        ctx.translate(vehicleOffset.x, -vehicleOffset.y);
-        ctx.scale(vehicleOffset.scale, vehicleOffset.scale);
+        ctx.translate(vOffset.x, -vOffset.y);
+        ctx.scale(vOffset.scale, vOffset.scale);
 
         drawLayerFrame(ctx, `${secCubeStr}_glow_001.png`, secSheet.framePos, secSheet.atlasImg, glowOn ? secColor : null);
         drawLayerFrame(ctx, `${secCubeStr}_001.png`, secSheet.framePos, secSheet.atlasImg, baseColor);
@@ -298,6 +291,7 @@ async function main(){
       }
     }
 
+    // Main icon layers in exact GD order (Primary -> Secondary -> White Details)
     drawLayerFrame(ctx, `${iconStr}_001.png`, framePos, atlasImg, baseColor);
     drawLayerFrame(ctx, `${iconStr}_2_001.png`, framePos, atlasImg, secColor);
     drawLayerFrame(ctx, `${iconStr}_extra_001.png`, framePos, atlasImg, WHITE);
