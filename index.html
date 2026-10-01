@@ -15,16 +15,8 @@
     justify-content: center; 
     overflow: hidden; 
   }
-  #icon { 
-    width: 150px;
-    height: 150px;
-    object-fit: contain;
+  #iconWrap { 
     animation: bob 1.6s ease-in-out infinite; 
-    opacity: 0;
-    transition: opacity 0.3s ease;
-  }
-  #icon.loaded {
-    opacity: 1;
   }
   @keyframes bob { 
     0% { transform: translateY(0px); } 
@@ -35,40 +27,64 @@
 </head>
 <body>
 
-<img id="icon" alt="GD Icon" />
+<div id="iconWrap"></div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/7.3.2/pixi.min.js"></script>
 <script>
 async function main() {
   const params = new URLSearchParams(window.location.search);
-  const username = params.get("username");
   const type = params.get("form") || "cube";
   const id = params.get("icon") || "1";
   const col1 = params.get("col1") || "0";
   const col2 = params.get("col2") || "0";
   const glowOn = params.get("glow") === "true";
 
-  const imgEl = document.getElementById("icon");
-
-  // Determine the target GDBrowser endpoint
-  let targetUrl;
-  if (username) {
-    targetUrl = `https://gdbrowser.com/icon/${encodeURIComponent(username)}`;
-  } else {
-    targetUrl = `https://gdbrowser.com/icon/icon?form=${type}&icon=${id}&col1=${col1}&col2=${col2}&glow=${glowOn}`;
-  }
-
-  // Handle load state
-  imgEl.onload = () => imgEl.classList.add("loaded");
-
-  // Force-trigger generation on GDBrowser by pre-fetching via image mode 'no-cors'
+  // 1. Fetch built-in GD Color palette from GDBrowser API
+  let colorMap = {};
   try {
-    await fetch(targetUrl, { mode: 'no-cors' });
+    const res = await fetch("https://gdbrowser.com/api/iconkit");
+    const data = await res.json();
+    colorMap = data.colors || {};
   } catch (e) {
-    // Ignore fetch restrictions, server receives the trigger request
+    console.warn("Could not load color palette from API, using fallback.");
   }
 
-  // Assign image source to display rendered icon
-  imgEl.src = targetUrl;
+  // Convert GD Color ID to Hex string
+  function getColorHex(colID) {
+    const c = colorMap[colID];
+    if (c) {
+      return "#" + ((1 << 24) + (c.r << 16) + (c.g << 8) + c.b).toString(16).slice(1);
+    }
+    // Default GD colors fallback map if API fails
+    const defaults = {
+      "0": "#7d7d7d", "1": "#ff0000", "2": "#ff5a00", "3": "#ffb400",
+      "83": "#00ffff", "98": "#ff0055"
+    };
+    return defaults[colID] || "#ffffff";
+  }
+
+  const primaryColor = getColorHex(col1);
+  const secondaryColor = getColorHex(col2);
+
+  // 2. Load pre-rendered base icon directly with explicit color arguments
+  const iconUrl = `https://gdbrowser.com/icon/icon?form=${type}&icon=${id}&col1=${col1}&col2=${col2}&glow=${glowOn}`;
+
+  const app = new PIXI.Application({
+    width: 150,
+    height: 150,
+    backgroundAlpha: 0
+  });
+  document.getElementById("iconWrap").appendChild(app.view);
+
+  // Create texture from image
+  const texture = await PIXI.Assets.load(iconUrl);
+  const sprite = new PIXI.Sprite(texture);
+  
+  sprite.anchor.set(0.5);
+  sprite.x = 75;
+  sprite.y = 75;
+
+  app.stage.addChild(sprite);
 }
 
 main();
