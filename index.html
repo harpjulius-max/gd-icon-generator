@@ -74,7 +74,7 @@ function parsePlist(xmlText){
       if (key === "textureRect"){
         let arr = val.slice(1, -1).split("},{").map(x => parseWeirdArray(x));
         pos[name].pos = arr[0];
-        pos[name].size = arr[1];
+        pos[name].size = arr[1]; // Raw atlas rect [w, h]
       }
     }
     pos[name].rotated = rotated;
@@ -82,13 +82,14 @@ function parsePlist(xmlText){
   return pos;
 }
 
+// Un-rotates sprite frame slices cleanly and applies multiplicative color tinting
 function getTintedFrameCanvas(atlasImg, bounds, colorHex){
   const [rx, ry] = bounds.pos;
+  const [atlasW, atlasH] = bounds.size;
   const isRotated = bounds.rotated;
-  const frameW = isRotated ? bounds.size[1] : bounds.size[0];
-  const frameH = isRotated ? bounds.size[0] : bounds.size[1];
-  const destW = bounds.size[0];
-  const destH = bounds.size[1];
+
+  const destW = isRotated ? atlasH : atlasW;
+  const destH = isRotated ? atlasW : atlasH;
 
   const crop = document.createElement("canvas");
   crop.width = destW;
@@ -99,10 +100,10 @@ function getTintedFrameCanvas(atlasImg, bounds, colorHex){
     cCtx.save();
     cCtx.translate(destW / 2, destH / 2);
     cCtx.rotate(-Math.PI / 2);
-    cCtx.drawImage(atlasImg, rx, ry, frameW, frameH, -frameH / 2, -frameW / 2, frameW, frameH);
+    cCtx.drawImage(atlasImg, rx, ry, atlasW, atlasH, -atlasW / 2, -atlasH / 2, atlasW, atlasH);
     cCtx.restore();
   } else {
-    cCtx.drawImage(atlasImg, rx, ry, frameW, frameH, 0, 0, destW, destH);
+    cCtx.drawImage(atlasImg, rx, ry, atlasW, atlasH, 0, 0, destW, destH);
   }
 
   if (!colorHex || colorHex.toLowerCase() === "#ffffff") {
@@ -180,10 +181,13 @@ async function main(){
 
   if (COMPLEX_FORMS.includes(type) && robotData && robotData.animations[type]) {
     const info = robotData.info[type] || {};
-    const idleFrame = robotData.animations[type].idle.frames;
+    const animation = robotData.animations[type];
+    const idleAnim = animation.idle || animation.run || Object.values(animation)[0];
+    
+    // Keyframe 0 contains the array of parts
+    const partFrames = (idleAnim && idleAnim.frames && idleAnim.frames.length > 0) ? idleAnim.frames[0] : [];
 
-    // Extract parent joint relationships to build a node tree
-    const parentList = info.parents || idleFrame.map(p => (p.parent !== undefined ? p.parent : -1));
+    const parentList = info.parents || partFrames.map(p => (p.parent !== undefined ? p.parent : -1));
     const childrenMap = {};
     const rootIndices = [];
 
@@ -196,10 +200,9 @@ async function main(){
       }
     });
 
-    // Recursive node rendering (inherits joint transforms down the limb tree)
     function drawNode(partIndex) {
-      const partData = idleFrame[partIndex];
-      if (!partData) return;
+      const partData = partFrames[partIndex];
+      if (!partData || !partData.pos) return;
 
       const partNum = padZero(partData.part || (partIndex + 1));
       const tintOverride = info.tints ? info.tints[partIndex] : null;
@@ -232,10 +235,9 @@ async function main(){
         const frameCanvas = getTintedFrameCanvas(atlasImg, bounds, layer.color);
         const ox = bounds.spriteOffset ? bounds.spriteOffset[0] : 0;
         const oy = bounds.spriteOffset ? -bounds.spriteOffset[1] : 0;
-        ctx.drawImage(frameCanvas, ox - bounds.size[0] / 2, oy - bounds.size[1] / 2);
+        ctx.drawImage(frameCanvas, ox - frameCanvas.width / 2, oy - frameCanvas.height / 2);
       });
 
-      // Render attached child joints
       const children = childrenMap[partIndex] || [];
       children.forEach(childIdx => drawNode(childIdx));
 
@@ -246,8 +248,13 @@ async function main(){
 
   } else {
     // Simple forms (Cube, Ship, Ball, UFO, Wave, Swing, Jetpack)
+    // Structured in bottom-to-top Z-order (Glow -> Driver / Attachment -> Main Body)
     const layers = [
       { frame: `${iconStr}_glow_001.png`, color: glowOn ? secColor : null },
+      { frame: `${iconStr}_02_glow_001.png`, color: glowOn ? secColor : null },
+      { frame: `${iconStr}_02_2_001.png`, color: secColor },
+      { frame: `${iconStr}_02_001.png`, color: baseColor },
+      { frame: `${iconStr}_02_extra_001.png`, color: WHITE },
       { frame: `${iconStr}_2_001.png`, color: secColor },
       { frame: `${iconStr}_001.png`, color: baseColor },
       { frame: `${iconStr}_extra_001.png`, color: WHITE }
@@ -262,7 +269,7 @@ async function main(){
       const ox = bounds.spriteOffset ? bounds.spriteOffset[0] : 0;
       const oy = bounds.spriteOffset ? -bounds.spriteOffset[1] : 0;
 
-      ctx.drawImage(frameCanvas, ox - bounds.size[0] / 2, oy - bounds.size[1] / 2);
+      ctx.drawImage(frameCanvas, ox - frameCanvas.width / 2, oy - frameCanvas.height / 2);
     });
   }
 
