@@ -77,18 +77,15 @@ function parsePlist(xmlText){
   return pos;
 }
 
-function makePartSprite(texture, bounds, tint, useAnchor = true){
+function makePartSprite(texture, bounds, tint, applyOffset = true){
   const rect = new PIXI.Rectangle(bounds.pos[0], bounds.pos[1], bounds.size[0], bounds.size[1]);
   const partTexture = new PIXI.Texture({ source: texture.source, frame: rect });
   const sprite = new PIXI.Sprite(partTexture);
   sprite.tint = tint;
-  if (useAnchor) {
-    sprite.anchor.set(0.5);
-    sprite.x = bounds.spriteOffset ? bounds.spriteOffset[0] : 0;
-    sprite.y = bounds.spriteOffset ? -bounds.spriteOffset[1] : 0;
-  } else {
-    sprite.x = bounds.spriteOffset ? bounds.spriteOffset[0] : 0;
-    sprite.y = bounds.spriteOffset ? -bounds.spriteOffset[1] : 0;
+  sprite.anchor.set(0.5);
+  if (applyOffset && bounds.spriteOffset) {
+    sprite.x = bounds.spriteOffset[0];
+    sprite.y = -bounds.spriteOffset[1];
   }
   return sprite;
 }
@@ -155,15 +152,14 @@ async function main(){
         const frameName = `${iconStr}${layer.suffix}`;
         const bounds = framePos[frameName];
         if (!bounds) return;
-        partContainer.addChild(makePartSprite(texture, bounds, layer.color, true));
+        partContainer.addChild(makePartSprite(texture, bounds, layer.color, false));
       });
 
-      // Align relative to parent container coordinates
       partContainer.x = partData.pos[0];
       partContainer.y = -partData.pos[1];
       partContainer.scale.x = partData.scale[0] * (partData.flipped[0] ? -1 : 1);
       partContainer.scale.y = partData.scale[1] * (partData.flipped[1] ? -1 : 1);
-      partContainer.angle = -partData.rotation;
+      partContainer.angle = partData.rotation;
 
       container.addChild(partContainer);
     }
@@ -173,15 +169,17 @@ async function main(){
     const framePos = parsePlist(await plistRes.text());
     const texture = await PIXI.Assets.load(`https://gdbrowser.com/iconkit/icons/${iconStr}-uhd.png`);
 
-    [
-      { suffix: "_glow_001.png", color: glowOn ? secColor : null },
-      { suffix: "_2_001.png", color: secColor },
-      { suffix: "_001.png", color: baseColor },
-      { suffix: "_extra_001.png", color: WHITE }
-    ].forEach(layer => {
+    // Target exact primary body layer names
+    const layers = [
+      { frame: `${iconStr}_glow_001.png`, color: glowOn ? secColor : null },
+      { frame: `${iconStr}_2_001.png`, color: secColor },
+      { frame: `${iconStr}_001.png`, color: baseColor },
+      { frame: `${iconStr}_extra_001.png`, color: WHITE }
+    ];
+
+    layers.forEach(layer => {
       if (layer.color === null) return;
-      const frameName = iconStr + layer.suffix;
-      const bounds = framePos[frameName];
+      const bounds = framePos[layer.frame];
       if (!bounds) return;
       container.addChild(makePartSprite(texture, bounds, layer.color, true));
     });
