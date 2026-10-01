@@ -23,6 +23,11 @@
     justify-content: center;
     animation: bob 1.6s ease-in-out infinite; 
   }
+  #iconWrap img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
   @keyframes bob { 
     0% { transform: translateY(0px); } 
     50% { transform: translateY(-15px); } 
@@ -77,13 +82,13 @@ function parsePlist(xmlText){
   return pos;
 }
 
-function makePartSprite(texture, bounds, tint, applyOffset = true){
+function makePartSprite(texture, bounds, tint){
   const rect = new PIXI.Rectangle(bounds.pos[0], bounds.pos[1], bounds.size[0], bounds.size[1]);
   const partTexture = new PIXI.Texture({ source: texture.source, frame: rect });
   const sprite = new PIXI.Sprite(partTexture);
   sprite.tint = tint;
   sprite.anchor.set(0.5);
-  if (applyOffset && bounds.spriteOffset) {
+  if (bounds.spriteOffset) {
     sprite.x = bounds.spriteOffset[0];
     sprite.y = -bounds.spriteOffset[1];
   }
@@ -100,6 +105,15 @@ async function main(){
 
   const wrap = document.getElementById("iconWrap");
 
+  // Complex forms (Robot / Spider) use server-rendered assembly to guarantee perfect part positioning and colors
+  if (COMPLEX_FORMS.includes(type)) {
+    const img = document.createElement("img");
+    img.src = `https://gdbrowser.com/icon/icon?form=${type}&icon=${id}&col1=${col1}&col2=${col2}&glow=${glowOn}`;
+    wrap.appendChild(img);
+    return;
+  }
+
+  // Simple forms rendered client-side with PixiJS v8
   const apiRes = await fetch("https://gdbrowser.com/api/iconkit");
   const apiData = await apiRes.json();
   const colors = apiData.colors;
@@ -121,69 +135,24 @@ async function main(){
 
   const container = new PIXI.Container();
 
-  if (COMPLEX_FORMS.includes(type)) {
-    const plistRes = await fetch(`https://gdbrowser.com/iconkit/icons/${iconStr}-uhd.plist`);
-    const framePos = parsePlist(await plistRes.text());
-    const texture = await PIXI.Assets.load(`https://gdbrowser.com/iconkit/icons/${iconStr}-uhd.png`);
+  const plistRes = await fetch(`https://gdbrowser.com/iconkit/icons/${iconStr}-uhd.plist`);
+  const framePos = parsePlist(await plistRes.text());
+  const texture = await PIXI.Assets.load(`https://gdbrowser.com/iconkit/icons/${iconStr}-uhd.png`);
 
-    const robotData = apiData.robotAnimations;
-    const info = robotData.info[type];
-    const idleFrame = robotData.animations[type].idle.frames[0];
+  // Explicit layer matching prevents extra sub-sprites (like ship/jetpack attachments) from misaligning
+  const layers = [
+    { frame: `${iconStr}_glow_001.png`, color: glowOn ? secColor : null },
+    { frame: `${iconStr}_2_001.png`, color: secColor },
+    { frame: `${iconStr}_001.png`, color: baseColor },
+    { frame: `${iconStr}_extra_001.png`, color: WHITE }
+  ];
 
-    for (let partIndex = 0; partIndex < idleFrame.length; partIndex++){
-      const partData = idleFrame[partIndex];
-      const partNum = padZero(partData.part || (partIndex + 1));
-
-      const tintOverride = info.tints ? info.tints[partIndex] : null;
-      let pColor = baseColor;
-      let sColor = secColor;
-      if (tintOverride === 1) sColor = baseColor;
-      if (tintOverride === 2) pColor = secColor;
-
-      const partContainer = new PIXI.Container();
-
-      [
-        { suffix: `_${partNum}_glow_001.png`, color: glowOn ? sColor : null },
-        { suffix: `_${partNum}_2_001.png`, color: sColor },
-        { suffix: `_${partNum}_001.png`, color: pColor },
-        { suffix: `_${partNum}_extra_001.png`, color: WHITE }
-      ].forEach(layer => {
-        if (layer.color === null) return;
-        const frameName = `${iconStr}${layer.suffix}`;
-        const bounds = framePos[frameName];
-        if (!bounds) return;
-        partContainer.addChild(makePartSprite(texture, bounds, layer.color, false));
-      });
-
-      partContainer.x = partData.pos[0];
-      partContainer.y = -partData.pos[1];
-      partContainer.scale.x = partData.scale[0] * (partData.flipped[0] ? -1 : 1);
-      partContainer.scale.y = partData.scale[1] * (partData.flipped[1] ? -1 : 1);
-      partContainer.angle = partData.rotation;
-
-      container.addChild(partContainer);
-    }
-  } else {
-    // Simple forms (Cube, Ship, Ball, UFO, Wave, Swing, Jetpack)
-    const plistRes = await fetch(`https://gdbrowser.com/iconkit/icons/${iconStr}-uhd.plist`);
-    const framePos = parsePlist(await plistRes.text());
-    const texture = await PIXI.Assets.load(`https://gdbrowser.com/iconkit/icons/${iconStr}-uhd.png`);
-
-    // Target exact primary body layer names
-    const layers = [
-      { frame: `${iconStr}_glow_001.png`, color: glowOn ? secColor : null },
-      { frame: `${iconStr}_2_001.png`, color: secColor },
-      { frame: `${iconStr}_001.png`, color: baseColor },
-      { frame: `${iconStr}_extra_001.png`, color: WHITE }
-    ];
-
-    layers.forEach(layer => {
-      if (layer.color === null) return;
-      const bounds = framePos[layer.frame];
-      if (!bounds) return;
-      container.addChild(makePartSprite(texture, bounds, layer.color, true));
-    });
-  }
+  layers.forEach(layer => {
+    if (layer.color === null) return;
+    const bounds = framePos[layer.frame];
+    if (!bounds) return;
+    container.addChild(makePartSprite(texture, bounds, layer.color));
+  });
 
   container.x = 75; 
   container.y = 75;
