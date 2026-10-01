@@ -55,7 +55,6 @@ const formMap = {
 const COMPLEX_FORMS = ["robot", "spider"];
 const VEHICLE_FORMS = ["ship", "bird", "jetpack"];
 
-// Offsets for rendering secondary cube inside vehicle forms
 const cubeOffsets = {
   ship: { x: 0, y: 20, scale: 0.55 },
   bird: { x: 0, y: 24, scale: 0.55 },
@@ -64,6 +63,15 @@ const cubeOffsets = {
 
 function padZero(num){ num = +num; return num < 10 ? "0" + num : "" + num; }
 function parseWeirdArray(data){ return data.replace(/[^0-9,-.]/g, "").split(",").map(x => +x); }
+
+function hexToRgb(hex) {
+  const clean = hex.replace("#", "");
+  return {
+    r: parseInt(clean.substring(0, 2), 16),
+    g: parseInt(clean.substring(2, 4), 16),
+    b: parseInt(clean.substring(4, 6), 16)
+  };
+}
 
 function parsePlist(xmlText){
   let dom = new DOMParser().parseFromString(xmlText, "text/xml");
@@ -90,7 +98,6 @@ function parsePlist(xmlText){
   return pos;
 }
 
-// Corrected tinting pipeline: Draws crop first, multiplies color, clips to sprite mask
 function getTintedFrameCanvas(atlasImg, bounds, colorHex){
   const [rx, ry] = bounds.pos;
   const [atlasW, atlasH] = bounds.size;
@@ -118,24 +125,20 @@ function getTintedFrameCanvas(atlasImg, bounds, colorHex){
     return crop;
   }
 
-  const tinted = document.createElement("canvas");
-  tinted.width = destW;
-  tinted.height = destH;
-  const tCtx = tinted.getContext("2d");
+  const { r: tr, g: tg, b: tb } = hexToRgb(colorHex);
+  const imgData = cCtx.getImageData(0, 0, destW, destH);
+  const data = imgData.data;
 
-  // 1. Render sprite mask
-  tCtx.drawImage(crop, 0, 0);
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i + 3] > 0) {
+      data[i]     = (data[i]     * tr) / 255;
+      data[i + 1] = (data[i + 1] * tg) / 255;
+      data[i + 2] = (data[i + 2] * tb) / 255;
+    }
+  }
 
-  // 2. Multiply color layer over sprite
-  tCtx.globalCompositeOperation = "multiply";
-  tCtx.fillStyle = colorHex;
-  tCtx.fillRect(0, 0, destW, destH);
-
-  // 3. Restore sprite transparency boundary
-  tCtx.globalCompositeOperation = "destination-in";
-  tCtx.drawImage(crop, 0, 0);
-
-  return tinted;
+  cCtx.putImageData(imgData, 0, 0);
+  return crop;
 }
 
 async function loadSpriteSheet(iconStr) {
@@ -173,7 +176,7 @@ async function main(){
   const col1 = parseInt(params.get("col1")) || 1;
   const col2 = parseInt(params.get("col2")) || 3;
   const glowOn = params.get("glow") === "true";
-  const showCube = params.get("showCube") !== "false"; // Set ?showCube=false in URL to hide secondary cube
+  const showCube = params.get("showCube") !== "false";
 
   const mainCanvas = document.getElementById("gdCanvas");
   const ctx = mainCanvas.getContext("2d");
@@ -221,7 +224,7 @@ async function main(){
       .map((part, originalIdx) => ({ ...part, originalIdx }))
       .sort((a, b) => (a.z ?? 0) - (b.z ?? 0));
 
-    // Glow Pass
+    // Pass 1: Glow Layers (Underneath)
     if (glowOn) {
       sortedParts.forEach(partData => {
         const partNum = padZero(partData.part || (partData.originalIdx + 1));
@@ -239,14 +242,20 @@ async function main(){
       });
     }
 
-    // Body Texture Pass
+    // Pass 2: Base & Secondary Layer Placement
     sortedParts.forEach(partData => {
       const partNum = padZero(partData.part || (partData.originalIdx + 1));
       const tintOverride = info.tints ? info.tints[partData.originalIdx] : null;
-      let pColor = baseColor;
-      let sColor = secColor;
-      if (tintOverride === 1) sColor = baseColor;
-      if (tintOverride === 2) pColor = secColor;
+
+      // Handle GD Tint Logic
+      let primaryColor = baseColor;
+      let secondaryColor = secColor;
+      if (tintOverride === 1) {
+        primaryColor = secColor;
+        secondaryColor = baseColor;
+      } else if (tintOverride === 2) {
+        secondaryColor = baseColor;
+      }
 
       ctx.save();
       ctx.translate(partData.pos[0] * 4, -partData.pos[1] * 4);
@@ -255,8 +264,13 @@ async function main(){
       const flipY = partData.flipped && partData.flipped[1] ? -1 : 1;
       ctx.scale((partData.scale ? partData.scale[0] : 1) * flipX, (partData.scale ? partData.scale[1] : 1) * flipY);
 
-      drawLayerFrame(ctx, `${iconStr}_${partNum}_2_001.png`, framePos, atlasImg, sColor);
-      drawLayerFrame(ctx, `${iconStr}_${partNum}_001.png`, framePos, atlasImg, pColor);
+      // Layer 1: Primary Body Layer (_001.png) -> Base Color
+      drawLayerFrame(ctx, `${iconStr}_${partNum}_001.png`, framePos, atlasImg, primaryColor);
+
+      // Layer 2: Secondary Accent Layer (_2_001.png) -> Secondary Color
+      drawLayerFrame(ctx, `${iconStr}_${partNum}_2_001.png`, framePos, atlasImg, secondaryColor);
+
+      // Layer 3: Extra Detail Layer (_extra_001.png) -> Untinted White
       drawLayerFrame(ctx, `${iconStr}_${partNum}_extra_001.png`, framePos, atlasImg, WHITE);
 
       ctx.restore();
@@ -266,10 +280,10 @@ async function main(){
     // --- SIMPLE FORMS & VEHICLES ---
     const vehicleOffset = cubeOffsets[form];
 
-    // Glow Layer
+    // Pass 1: Glow
     drawLayerFrame(ctx, `${iconStr}_glow_001.png`, framePos, atlasImg, glowOn ? secColor : null);
 
-    // Secondary Driver Cube (Optional)
+    // Pass 2: Drivers / Inner Cubes
     if (showCube && VEHICLE_FORMS.includes(form) && vehicleOffset) {
       try {
         const secCubeStr = `player_${padZero(cubeId)}`;
@@ -280,8 +294,8 @@ async function main(){
         ctx.scale(vehicleOffset.scale, vehicleOffset.scale);
 
         drawLayerFrame(ctx, `${secCubeStr}_glow_001.png`, secSheet.framePos, secSheet.atlasImg, glowOn ? secColor : null);
-        drawLayerFrame(ctx, `${secCubeStr}_2_001.png`, secSheet.framePos, secSheet.atlasImg, secColor);
         drawLayerFrame(ctx, `${secCubeStr}_001.png`, secSheet.framePos, secSheet.atlasImg, baseColor);
+        drawLayerFrame(ctx, `${secCubeStr}_2_001.png`, secSheet.framePos, secSheet.atlasImg, secColor);
         drawLayerFrame(ctx, `${secCubeStr}_extra_001.png`, secSheet.framePos, secSheet.atlasImg, WHITE);
 
         ctx.restore();
@@ -290,9 +304,9 @@ async function main(){
       }
     }
 
-    // Vehicle Hull / Primary Form Layers
-    drawLayerFrame(ctx, `${iconStr}_2_001.png`, framePos, atlasImg, secColor);
+    // Pass 3: Standard Layer Order (Primary -> Secondary Accent -> White Details)
     drawLayerFrame(ctx, `${iconStr}_001.png`, framePos, atlasImg, baseColor);
+    drawLayerFrame(ctx, `${iconStr}_2_001.png`, framePos, atlasImg, secColor);
     drawLayerFrame(ctx, `${iconStr}_extra_001.png`, framePos, atlasImg, WHITE);
   }
 
