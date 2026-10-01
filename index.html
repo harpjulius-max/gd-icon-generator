@@ -82,7 +82,7 @@ function parsePlist(xmlText){
   return pos;
 }
 
-// Un-rotates plist frames stored sideways and tints them to exact RGB color
+// Crops sprite frame and applies multiplicative tinting to preserve black outlines
 function getTintedFrameCanvas(atlasImg, bounds, colorHex){
   const [rx, ry] = bounds.pos;
   const isRotated = bounds.rotated;
@@ -91,28 +91,41 @@ function getTintedFrameCanvas(atlasImg, bounds, colorHex){
   const destW = bounds.size[0];
   const destH = bounds.size[1];
 
-  const c = document.createElement("canvas");
-  c.width = destW;
-  c.height = destH;
-  const ctx = c.getContext("2d");
+  const crop = document.createElement("canvas");
+  crop.width = destW;
+  crop.height = destH;
+  const cCtx = crop.getContext("2d");
 
   if (isRotated) {
-    ctx.save();
-    ctx.translate(destW / 2, destH / 2);
-    ctx.rotate(-Math.PI / 2);
-    ctx.drawImage(atlasImg, rx, ry, frameW, frameH, -frameH / 2, -frameW / 2, frameW, frameH);
-    ctx.restore();
+    cCtx.save();
+    cCtx.translate(destW / 2, destH / 2);
+    cCtx.rotate(-Math.PI / 2);
+    cCtx.drawImage(atlasImg, rx, ry, frameW, frameH, -frameH / 2, -frameW / 2, frameW, frameH);
+    cCtx.restore();
   } else {
-    ctx.drawImage(atlasImg, rx, ry, frameW, frameH, 0, 0, destW, destH);
+    cCtx.drawImage(atlasImg, rx, ry, frameW, frameH, 0, 0, destW, destH);
   }
 
-  if (colorHex && colorHex !== "#ffffff") {
-    ctx.globalCompositeOperation = "source-in";
-    ctx.fillStyle = colorHex;
-    ctx.fillRect(0, 0, destW, destH);
+  if (!colorHex || colorHex.toLowerCase() === "#ffffff") {
+    return crop;
   }
 
-  return c;
+  const tinted = document.createElement("canvas");
+  tinted.width = destW;
+  tinted.height = destH;
+  const tCtx = tinted.getContext("2d");
+
+  // Multiplicative blending preserves black outlines while tinting white regions
+  tCtx.fillStyle = colorHex;
+  tCtx.fillRect(0, 0, destW, destH);
+
+  tCtx.globalCompositeOperation = "multiply";
+  tCtx.drawImage(crop, 0, 0);
+
+  tCtx.globalCompositeOperation = "destination-in";
+  tCtx.drawImage(crop, 0, 0);
+
+  return tinted;
 }
 
 async function main(){
@@ -164,12 +177,11 @@ async function main(){
     atlasImg.onerror = reject;
   });
 
-  // Apply master center and 90-degree rotation across all forms
+  // Upright canvas origin at center
   ctx.save();
   ctx.translate(150, 150);
-  ctx.rotate((90 * Math.PI) / 180);
 
-  if (COMPLEX_FORMS.includes(type) && robotData) {
+  if (COMPLEX_FORMS.includes(type) && robotData && robotData.animations[type]) {
     const info = robotData.info[type];
     const idleFrame = robotData.animations[type].idle.frames[0];
 
@@ -185,11 +197,11 @@ async function main(){
 
       ctx.save();
       ctx.translate(partData.pos[0], -partData.pos[1]);
-      ctx.rotate((-partData.rotation * Math.PI) / 180);
-      ctx.scale(
-        partData.scale[0] * (partData.flipped[0] ? -1 : 1),
-        partData.scale[1] * (partData.flipped[1] ? -1 : 1)
-      );
+      ctx.rotate((partData.rotation * Math.PI) / 180);
+      
+      const flipX = partData.flipped && partData.flipped[0] ? -1 : 1;
+      const flipY = partData.flipped && partData.flipped[1] ? -1 : 1;
+      ctx.scale(partData.scale[0] * flipX, partData.scale[1] * flipY);
 
       const layers = [
         { suffix: `_${partNum}_glow_001.png`, color: glowOn ? sColor : null },
