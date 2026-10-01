@@ -4,13 +4,40 @@
 <meta charset="UTF-8">
 <title>GD Icon Render</title>
 <style>
-  html, body { margin:0; padding:0; width:300px; height:300px; background:#000; display:flex; align-items:center; justify-content:center; overflow:hidden; }
-  #iconWrap { animation: bob 1.6s ease-in-out infinite; }
-  @keyframes bob { 0%{transform:translateY(0px);} 50%{transform:translateY(-15px);} 100%{transform:translateY(0px);} }
+  html, body { 
+    margin:0; 
+    padding:0; 
+    width:300px; 
+    height:300px; 
+    background:#000; 
+    display:flex; 
+    align-items:center; 
+    justify-content:center; 
+    overflow:hidden; 
+  }
+  #iconWrap { 
+    width: 150px;
+    height: 150px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: bob 1.6s ease-in-out infinite; 
+  }
+  #iconWrap img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+  @keyframes bob { 
+    0% { transform: translateY(0px); } 
+    50% { transform: translateY(-15px); } 
+    100% { transform: translateY(0px); } 
+  }
 </style>
 </head>
 <body>
 <div id="iconWrap"></div>
+
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/8.0.0/pixi.min.js"></script>
 <script>
 const WHITE = 0xffffff;
@@ -58,12 +85,23 @@ function makePartSprite(texture, bounds, tint){
 
 async function main(){
   const params = new URLSearchParams(window.location.search);
-  const type = params.get("form") || "cube";
+  const type = (params.get("form") || "cube").toLowerCase();
   const id = parseInt(params.get("icon")) || 1;
   const col1 = parseInt(params.get("col1")) || 1;
   const col2 = parseInt(params.get("col2")) || 3;
   const glowOn = params.get("glow") === "true";
 
+  const wrap = document.getElementById("iconWrap");
+
+  // Route complex forms (robot/spider) through pre-rendered image element
+  if (COMPLEX_FORMS.includes(type)) {
+    const img = document.createElement("img");
+    img.src = `https://gdbrowser.com/icon/icon?form=${type}&icon=${id}&col1=${col1}&col2=${col2}&glow=${glowOn}`;
+    wrap.appendChild(img);
+    return;
+  }
+
+  // Simple forms use PixiJS client-side renderer
   const apiRes = await fetch("https://gdbrowser.com/api/iconkit");
   const apiData = await apiRes.json();
   const colors = apiData.colors;
@@ -72,83 +110,31 @@ async function main(){
     return c ? (c.r<<16)+(c.g<<8)+c.b : WHITE;
   }
 
-  const form = formMap[type.toLowerCase()] || type.toLowerCase();
+  const form = formMap[type] || type;
   const iconStr = `${form}_${padZero(id)}`;
 
   const app = new PIXI.Application();
   await app.init({ width:150, height:150, backgroundAlpha:0 });
-  document.getElementById("iconWrap").appendChild(app.canvas);
+  wrap.appendChild(app.canvas);
 
   const container = new PIXI.Container();
 
-  if (COMPLEX_FORMS.includes(form)){
-    // Restored original individual part loading per limb
-    const robotData = apiData.robotAnimations;
-    const info = robotData.info[form];
-    const idleFrame = robotData.animations[form].idle.frames[0];
+  const plistRes = await fetch(`https://gdbrowser.com/iconkit/icons/${iconStr}-uhd.plist`);
+  const framePos = parsePlist(await plistRes.text());
+  const texture = await PIXI.Assets.load(`https://gdbrowser.com/iconkit/icons/${iconStr}-uhd.png`);
 
-    const baseColor = toHex(col1);
-    const secColor = toHex(col2);
-
-    for (let partIndex = 0; partIndex < idleFrame.length; partIndex++){
-      const partData = idleFrame[partIndex];
-      const partName = padZero(partData.part || (partIndex + 1));
-      const partIconStr = `${iconStr}_${partName}`;
-
-      const plistRes = await fetch(`https://gdbrowser.com/iconkit/icons/${partIconStr}-uhd.plist`);
-      if (!plistRes.ok) continue;
-      
-      const framePos = parsePlist(await plistRes.text());
-      const texture = await PIXI.Assets.load(`https://gdbrowser.com/iconkit/icons/${partIconStr}-uhd.png`);
-
-      const tintOverride = info.tints ? info.tints[partIndex] : null;
-      let pColor = baseColor;
-      let sColor = secColor;
-      if (tintOverride === 1) sColor = baseColor;
-      if (tintOverride === 2) pColor = secColor;
-
-      [
-        { suffix: "_glow_001.png", color: glowOn ? sColor : null },
-        { suffix: "_2_001.png", color: sColor },
-        { suffix: "_001.png", color: pColor },
-        { suffix: "_extra_001.png", color: WHITE }
-      ].forEach(layer => {
-        if (layer.color === null) return;
-        const frameName = partIconStr + layer.suffix;
-        const bounds = framePos[frameName];
-        if (!bounds) return;
-
-        const sprite = makePartSprite(texture, bounds, layer.color);
-        
-        // Correct original part placement & transformation
-        sprite.x += partData.pos[0];
-        sprite.y -= partData.pos[1];
-        sprite.scale.x = partData.scale[0] * (partData.flipped[0] ? -1 : 1);
-        sprite.scale.y = partData.scale[1] * (partData.flipped[1] ? -1 : 1);
-        sprite.angle = partData.rotation;
-
-        container.addChild(sprite);
-      });
-    }
-  } else {
-    // Simple single-layer forms
-    const plistRes = await fetch(`https://gdbrowser.com/iconkit/icons/${iconStr}-uhd.plist`);
-    const framePos = parsePlist(await plistRes.text());
-    const texture = await PIXI.Assets.load(`https://gdbrowser.com/iconkit/icons/${iconStr}-uhd.png`);
-
-    [
-      { suffix: "_glow_001.png", color: glowOn ? toHex(col2) : null },
-      { suffix: "_2_001.png", color: toHex(col2) },
-      { suffix: "_001.png", color: toHex(col1) },
-      { suffix: "_extra_001.png", color: WHITE }
-    ].forEach(layer => {
-      if (layer.color === null) return;
-      const frameName = iconStr + layer.suffix;
-      const bounds = framePos[frameName];
-      if (!bounds) return;
-      container.addChild(makePartSprite(texture, bounds, layer.color));
-    });
-  }
+  [
+    { suffix: "_glow_001.png", color: glowOn ? toHex(col2) : null },
+    { suffix: "_2_001.png", color: toHex(col2) },
+    { suffix: "_001.png", color: toHex(col1) },
+    { suffix: "_extra_001.png", color: WHITE }
+  ].forEach(layer => {
+    if (layer.color === null) return;
+    const frameName = iconStr + layer.suffix;
+    const bounds = framePos[frameName];
+    if (!bounds) return;
+    container.addChild(makePartSprite(texture, bounds, layer.color));
+  });
 
   container.x = 75; 
   container.y = 75;
