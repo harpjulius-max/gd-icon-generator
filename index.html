@@ -1,3 +1,4 @@
+HTML
 <!DOCTYPE html>
 <html>
 <head>
@@ -48,8 +49,10 @@ async function main() {
   const username = params.get("username");
   const type = params.get("form") || "cube";
   const id = params.get("icon") || "1";
-  const col1 = params.get("col1") || "0";
-  const col2 = params.get("col2") || "0";
+  
+  // FIXED: Default missing color IDs to 1 (Red) and 3 (Yellow) instead of 0 (Grayscale)
+  const col1 = params.get("col1") || "1";
+  const col2 = params.get("col2") || "3";
   const glowOn = params.get("glow") === "true";
 
   const imgEl = document.getElementById("icon");
@@ -58,8 +61,7 @@ async function main() {
   if (username) {
     targetUrl = `https://gdbrowser.com/icon/${encodeURIComponent(username)}`;
   } else {
-    // Pass both col1/col2 and color1/color2 formats to guarantee backend recognition
-    targetUrl = `https://gdbrowser.com/icon/icon?form=${type}&icon=${id}&col1=${col1}&col2=${col2}&color1=${col1}&color2=${col2}&glow=${glowOn}`;
+    targetUrl = `https://gdbrowser.com/icon/icon?form=${type}&icon=${id}&col1=${col1}&col2=${col2}&glow=${glowOn}`;
   }
 
   // Pre-fetch trigger request
