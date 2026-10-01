@@ -5,15 +5,15 @@
 <title>GD Icon Render</title>
 <style>
   html, body { 
-    margin:0; 
-    padding:0; 
-    width:300px; 
-    height:300px; 
-    background:#000; 
-    display:flex; 
-    align-items:center; 
-    justify-content:center; 
-    overflow:hidden; 
+    margin: 0; 
+    padding: 0; 
+    width: 300px; 
+    height: 300px; 
+    background: #000; 
+    display: flex; 
+    align-items: center; 
+    justify-content: center; 
+    overflow: hidden; 
   }
   #iconWrap { 
     width: 150px;
@@ -22,11 +22,6 @@
     align-items: center;
     justify-content: center;
     animation: bob 1.6s ease-in-out infinite; 
-  }
-  #iconWrap img {
-    width: 100%;
-    height: 100%;
-    object-fit: contain;
   }
   @keyframes bob { 
     0% { transform: translateY(0px); } 
@@ -41,28 +36,38 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/8.0.0/pixi.min.js"></script>
 <script>
 const WHITE = 0xffffff;
-const formMap = { cube:"player", ball:"player_ball", ufo:"bird", wave:"dart", ship:"ship", swing:"swing", jetpack:"jetpack", robot:"robot", spider:"spider" };
+const formMap = { 
+  cube: "player", 
+  ball: "player_ball", 
+  ufo: "bird", 
+  wave: "dart", 
+  ship: "ship", 
+  swing: "swing", 
+  jetpack: "jetpack", 
+  robot: "robot", 
+  spider: "spider" 
+};
 const COMPLEX_FORMS = ["robot", "spider"];
 
-function padZero(num){ num = +num; return num < 10 ? "0"+num : ""+num; }
-function parseWeirdArray(data){ return data.replace(/[^0-9,-.]/g,"").split(",").map(x=>+x); }
+function padZero(num){ num = +num; return num < 10 ? "0" + num : "" + num; }
+function parseWeirdArray(data){ return data.replace(/[^0-9,-.]/g, "").split(",").map(x => +x); }
 
 function parsePlist(xmlText){
   let dom = new DOMParser().parseFromString(xmlText, "text/xml");
   let frames = dom.children[0].children[0].children[1].children;
   let pos = {};
-  for (let i=0;i<frames.length;i+=2){
+  for (let i = 0; i < frames.length; i += 2){
     let name = frames[i].innerHTML;
     let data = frames[i+1].children;
     let rotated = false;
     pos[name] = {};
-    for (let n=0;n<data.length;n+=2){
+    for (let n = 0; n < data.length; n += 2){
       let key = data[n].innerHTML;
       let val = data[n+1].innerHTML;
       if (key === "spriteOffset") pos[name].spriteOffset = parseWeirdArray(val);
       if (key === "textureRotated") rotated = data[n+1].outerHTML.includes("true");
       if (key === "textureRect"){
-        let arr = val.slice(1,-1).split("},{").map(x=>parseWeirdArray(x));
+        let arr = val.slice(1, -1).split("},{").map(x => parseWeirdArray(x));
         pos[name].pos = arr[0];
         pos[name].size = arr[1];
       }
@@ -78,8 +83,9 @@ function makePartSprite(texture, bounds, tint){
   const sprite = new PIXI.Sprite(partTexture);
   sprite.tint = tint;
   sprite.anchor.set(0.5);
-  sprite.x = (bounds.spriteOffset ? bounds.spriteOffset[0] : 0);
-  sprite.y = -(bounds.spriteOffset ? bounds.spriteOffset[1] : 0);
+  // Keep original texture offsets strictly relative to sprite center
+  sprite.x = bounds.spriteOffset ? bounds.spriteOffset[0] : 0;
+  sprite.y = bounds.spriteOffset ? -bounds.spriteOffset[1] : 0;
   return sprite;
 }
 
@@ -93,52 +99,97 @@ async function main(){
 
   const wrap = document.getElementById("iconWrap");
 
-  // Route complex forms (robot/spider) through pre-rendered image element
-  if (COMPLEX_FORMS.includes(type)) {
-    const img = document.createElement("img");
-    img.src = `https://gdbrowser.com/icon/icon?form=${type}&icon=${id}&col1=${col1}&col2=${col2}&glow=${glowOn}`;
-    wrap.appendChild(img);
-    return;
-  }
-
-  // Simple forms use PixiJS client-side renderer
+  // Fetch color database from IconKit API
   const apiRes = await fetch("https://gdbrowser.com/api/iconkit");
   const apiData = await apiRes.json();
   const colors = apiData.colors;
+
   function toHex(colID){
     let c = colors[colID];
-    return c ? (c.r<<16)+(c.g<<8)+c.b : WHITE;
+    return c ? (c.r << 16) + (c.g << 8) + c.b : WHITE;
   }
+
+  const baseColor = toHex(col1);
+  const secColor = toHex(col2);
 
   const form = formMap[type] || type;
   const iconStr = `${form}_${padZero(id)}`;
 
   const app = new PIXI.Application();
-  await app.init({ width:150, height:150, backgroundAlpha:0 });
+  await app.init({ width: 150, height: 150, backgroundAlpha: 0 });
   wrap.appendChild(app.canvas);
 
   const container = new PIXI.Container();
 
-  const plistRes = await fetch(`https://gdbrowser.com/iconkit/icons/${iconStr}-uhd.plist`);
-  const framePos = parsePlist(await plistRes.text());
-  const texture = await PIXI.Assets.load(`https://gdbrowser.com/iconkit/icons/${iconStr}-uhd.png`);
+  if (COMPLEX_FORMS.includes(type)) {
+    // Load unified plist and sheet for Robot/Spider
+    const plistRes = await fetch(`https://gdbrowser.com/iconkit/icons/${iconStr}-uhd.plist`);
+    const framePos = parsePlist(await plistRes.text());
+    const texture = await PIXI.Assets.load(`https://gdbrowser.com/iconkit/icons/${iconStr}-uhd.png`);
 
-  [
-    { suffix: "_glow_001.png", color: glowOn ? toHex(col2) : null },
-    { suffix: "_2_001.png", color: toHex(col2) },
-    { suffix: "_001.png", color: toHex(col1) },
-    { suffix: "_extra_001.png", color: WHITE }
-  ].forEach(layer => {
-    if (layer.color === null) return;
-    const frameName = iconStr + layer.suffix;
-    const bounds = framePos[frameName];
-    if (!bounds) return;
-    container.addChild(makePartSprite(texture, bounds, layer.color));
-  });
+    const robotData = apiData.robotAnimations;
+    const info = robotData.info[type];
+    const idleFrame = robotData.animations[type].idle.frames[0];
 
+    for (let partIndex = 0; partIndex < idleFrame.length; partIndex++){
+      const partData = idleFrame[partIndex];
+      const partNum = padZero(partData.part || (partIndex + 1));
+
+      // Resolve color tint overrides from animation info
+      const tintOverride = info.tints ? info.tints[partIndex] : null;
+      let pColor = baseColor;
+      let sColor = secColor;
+      if (tintOverride === 1) sColor = baseColor;
+      if (tintOverride === 2) pColor = secColor;
+
+      const partContainer = new PIXI.Container();
+
+      [
+        { suffix: `_${partNum}_glow_001.png`, color: glowOn ? sColor : null },
+        { suffix: `_${partNum}_2_001.png`, color: sColor },
+        { suffix: `_${partNum}_001.png`, color: pColor },
+        { suffix: `_${partNum}_extra_001.png`, color: WHITE }
+      ].forEach(layer => {
+        if (layer.color === null) return;
+        const frameName = `${iconStr}${layer.suffix}`;
+        const bounds = framePos[frameName];
+        if (!bounds) return;
+        partContainer.addChild(makePartSprite(texture, bounds, layer.color));
+      });
+
+      // Apply keyframe placement transforms
+      partContainer.x = partData.pos[0];
+      partContainer.y = -partData.pos[1];
+      partContainer.scale.x = partData.scale[0] * (partData.flipped[0] ? -1 : 1);
+      partContainer.scale.y = partData.scale[1] * (partData.flipped[1] ? -1 : 1);
+      partContainer.angle = partData.rotation;
+
+      container.addChild(partContainer);
+    }
+  } else {
+    // Simple forms (Cube, Ship, Ball, UFO, Wave, Swing, Jetpack)
+    const plistRes = await fetch(`https://gdbrowser.com/iconkit/icons/${iconStr}-uhd.plist`);
+    const framePos = parsePlist(await plistRes.text());
+    const texture = await PIXI.Assets.load(`https://gdbrowser.com/iconkit/icons/${iconStr}-uhd.png`);
+
+    [
+      { suffix: "_glow_001.png", color: glowOn ? secColor : null },
+      { suffix: "_2_001.png", color: secColor },
+      { suffix: "_001.png", color: baseColor },
+      { suffix: "_extra_001.png", color: WHITE }
+    ].forEach(layer => {
+      if (layer.color === null) return;
+      const frameName = iconStr + layer.suffix;
+      const bounds = framePos[frameName];
+      if (!bounds) return;
+      container.addChild(makePartSprite(texture, bounds, layer.color));
+    });
+  }
+
+  // Center container and align rotation upright
   container.x = 75; 
   container.y = 75;
-  container.angle = -90;
+  container.angle = 0; // Fixed 90-degree offset across all icons
   app.stage.addChild(container);
 }
 
