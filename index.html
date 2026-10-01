@@ -17,11 +17,15 @@
 const WHITE = 0xffffff;
 const formMap = { cube:"player", ball:"player_ball", ufo:"bird", wave:"dart", ship:"ship", swing:"swing", jetpack:"jetpack", robot:"robot", spider:"spider" };
 const COMPLEX_FORMS = ["robot", "spider"];
-const SHEET_SCALE = 2;   // robot/spider part spacing (was 4; try 3 for a subtler cut)
-const SIMPLE_ANGLE = 0;  // rotation for every non-robot/spider form (was -90, now flipped 90 clockwise)
-const UFO_COLOR_EXTRA = 90; // extra rotation for the UFO's colored layers only (use -90 if it spins the wrong way)
-const ROTATE_MODE = 2;   // Pixi groupD8 rotation for rotated frames; try 6 if parts look turned the wrong way
-const ROT_SIGN = 1;      // set to -1 if limbs bend the wrong direction
+// Every tuning value can be overridden from the URL, e.g. &scale=3&rotsign=-1 (no commit needed)
+const Q = new URLSearchParams(window.location.search);
+const num = (k, d) => Q.has(k) ? parseFloat(Q.get(k)) : d;
+const SHEET_SCALE = num("scale", 4);        // robot/spider part spacing
+const SIMPLE_ANGLE = num("angle", 0);       // all non-robot/spider forms (colored layers)
+const UFO_BASE_ANGLE = num("ufobase", -90); // UFO's regular (glow) layer stays where it was
+const UFO_COLOR_EXTRA = num("ufocolor", 90);// UFO colored layers: base + this = net SIMPLE_ANGLE
+const ROTATE_MODE = num("rotmode", 2);      // Pixi groupD8 for rotated frames; try 6
+const ROT_SIGN = num("rotsign", 1);         // -1 if limbs bend the wrong way
 const BASE = "https://gdbrowser.com/iconkit/icons/";
  
 // ---------- helpers ----------
@@ -194,7 +198,8 @@ async function main(){
   }
  
   container.x = 75; container.y = 75;
-  container.angle = COMPLEX_FORMS.includes(form) ? 0 : SIMPLE_ANGLE;
+  container.angle = COMPLEX_FORMS.includes(form) ? 0 : (form === "bird" ? UFO_BASE_ANGLE : SIMPLE_ANGLE);
+  console.log("settings:", { SHEET_SCALE, SIMPLE_ANGLE, UFO_BASE_ANGLE, UFO_COLOR_EXTRA, ROTATE_MODE, ROT_SIGN });
   app.stage.addChild(container);
 }
  
@@ -202,3 +207,4 @@ main();
 </script>
 </body>
 </html>
+ 
