@@ -53,6 +53,14 @@ const formMap = {
   spider: "spider" 
 };
 const COMPLEX_FORMS = ["robot", "spider"];
+const VEHICLE_FORMS = ["ship", "bird", "jetpack"];
+
+// Offset standards for rendering secondary cube inside vehicle forms
+const cubeOffsets = {
+  ship: { x: 0, y: 20, scale: 0.55 },
+  bird: { x: 0, y: 24, scale: 0.55 },
+  jetpack: { x: 12, y: 8, scale: 0.60 }
+};
 
 function padZero(num){ num = +num; return num < 10 ? "0" + num : "" + num; }
 function parseWeirdArray(data){ return data.replace(/[^0-9,-.]/g, "").split(",").map(x => +x); }
@@ -74,7 +82,7 @@ function parsePlist(xmlText){
       if (key === "textureRect"){
         let arr = val.slice(1, -1).split("},{").map(x => parseWeirdArray(x));
         pos[name].pos = arr[0];
-        pos[name].size = arr[1]; // Raw atlas rect [w, h]
+        pos[name].size = arr[1];
       }
     }
     pos[name].rotated = rotated;
@@ -82,7 +90,6 @@ function parsePlist(xmlText){
   return pos;
 }
 
-// Un-rotates sprite frame slices cleanly and applies multiplicative color tinting
 function getTintedFrameCanvas(atlasImg, bounds, colorHex){
   const [rx, ry] = bounds.pos;
   const [atlasW, atlasH] = bounds.size;
@@ -127,10 +134,38 @@ function getTintedFrameCanvas(atlasImg, bounds, colorHex){
   return tinted;
 }
 
+async function loadSpriteSheet(iconStr) {
+  const plistRes = await fetch(`https://gdbrowser.com/iconkit/icons/${iconStr}-uhd.plist`);
+  const framePos = parsePlist(await plistRes.text());
+
+  const atlasImg = new Image();
+  atlasImg.crossOrigin = "anonymous";
+  atlasImg.src = `https://gdbrowser.com/iconkit/icons/${iconStr}-uhd.png`;
+  await new Promise((resolve, reject) => {
+    atlasImg.onload = resolve;
+    atlasImg.onerror = reject;
+  });
+
+  return { framePos, atlasImg };
+}
+
+function drawLayerFrame(ctx, frameName, framePos, atlasImg, colorHex) {
+  if (!colorHex) return;
+  const bounds = framePos[frameName];
+  if (!bounds) return;
+
+  const frameCanvas = getTintedFrameCanvas(atlasImg, bounds, colorHex);
+  const ox = bounds.spriteOffset ? bounds.spriteOffset[0] : 0;
+  const oy = bounds.spriteOffset ? -bounds.spriteOffset[1] : 0;
+
+  ctx.drawImage(frameCanvas, ox - frameCanvas.width / 2, oy - frameCanvas.height / 2);
+}
+
 async function main(){
   const params = new URLSearchParams(window.location.search);
   const type = (params.get("form") || "cube").toLowerCase();
   const id = parseInt(params.get("icon")) || 1;
+  const cubeId = parseInt(params.get("cube")) || 1;
   const col1 = parseInt(params.get("col1")) || 1;
   const col2 = parseInt(params.get("col2")) || 3;
   const glowOn = params.get("glow") === "true";
@@ -165,112 +200,96 @@ async function main(){
   const form = formMap[type] || type;
   const iconStr = `${form}_${padZero(id)}`;
 
-  const plistRes = await fetch(`https://gdbrowser.com/iconkit/icons/${iconStr}-uhd.plist`);
-  const framePos = parsePlist(await plistRes.text());
-
-  const atlasImg = new Image();
-  atlasImg.crossOrigin = "anonymous";
-  atlasImg.src = `https://gdbrowser.com/iconkit/icons/${iconStr}-uhd.png`;
-  await new Promise((resolve, reject) => {
-    atlasImg.onload = resolve;
-    atlasImg.onerror = reject;
-  });
+  const { framePos, atlasImg } = await loadSpriteSheet(iconStr);
 
   ctx.save();
   ctx.translate(150, 150);
 
+  // --- ROBOT & SPIDER RENDERING ---
   if (COMPLEX_FORMS.includes(type) && robotData && robotData.animations[type]) {
     const info = robotData.info[type] || {};
     const animation = robotData.animations[type];
     const idleAnim = animation.idle || animation.run || Object.values(animation)[0];
-    
-    // Keyframe 0 contains the array of parts
     const partFrames = (idleAnim && idleAnim.frames && idleAnim.frames.length > 0) ? idleAnim.frames[0] : [];
 
-    const parentList = info.parents || partFrames.map(p => (p.parent !== undefined ? p.parent : -1));
-    const childrenMap = {};
-    const rootIndices = [];
+    // Map parts and sort strictly by skeletal Z-index depth
+    const sortedParts = partFrames
+      .map((part, originalIdx) => ({ ...part, originalIdx }))
+      .sort((a, b) => (a.z ?? 0) - (b.z ?? 0));
 
-    parentList.forEach((pIdx, i) => {
-      if (pIdx === -1 || pIdx === null || pIdx === undefined || pIdx === i) {
-        rootIndices.push(i);
-      } else {
-        if (!childrenMap[pIdx]) childrenMap[pIdx] = [];
-        childrenMap[pIdx].push(i);
-      }
-    });
+    // Pass 1: Render background Glow layers for all body parts
+    if (glowOn) {
+      sortedParts.forEach(partData => {
+        const partNum = padZero(partData.part || (partData.originalIdx + 1));
+        const frameName = `${iconStr}_${partNum}_glow_001.png`;
 
-    function drawNode(partIndex) {
-      const partData = partFrames[partIndex];
-      if (!partData || !partData.pos) return;
+        ctx.save();
+        ctx.translate(partData.pos[0] * 4, -partData.pos[1] * 4);
+        ctx.rotate((partData.rotation * Math.PI) / 180);
+        const flipX = partData.flipped && partData.flipped[0] ? -1 : 1;
+        const flipY = partData.flipped && partData.flipped[1] ? -1 : 1;
+        ctx.scale((partData.scale ? partData.scale[0] : 1) * flipX, (partData.scale ? partData.scale[1] : 1) * flipY);
 
-      const partNum = padZero(partData.part || (partIndex + 1));
-      const tintOverride = info.tints ? info.tints[partIndex] : null;
+        drawLayerFrame(ctx, frameName, framePos, atlasImg, secColor);
+        ctx.restore();
+      });
+    }
+
+    // Pass 2: Render textured body parts in depth order
+    sortedParts.forEach(partData => {
+      const partNum = padZero(partData.part || (partData.originalIdx + 1));
+      const tintOverride = info.tints ? info.tints[partData.originalIdx] : null;
       let pColor = baseColor;
       let sColor = secColor;
       if (tintOverride === 1) sColor = baseColor;
       if (tintOverride === 2) pColor = secColor;
 
       ctx.save();
-      ctx.translate(partData.pos[0], -partData.pos[1]);
+      ctx.translate(partData.pos[0] * 4, -partData.pos[1] * 4);
       ctx.rotate((partData.rotation * Math.PI) / 180);
-      
       const flipX = partData.flipped && partData.flipped[0] ? -1 : 1;
       const flipY = partData.flipped && partData.flipped[1] ? -1 : 1;
       ctx.scale((partData.scale ? partData.scale[0] : 1) * flipX, (partData.scale ? partData.scale[1] : 1) * flipY);
 
-      const layers = [
-        { suffix: `_${partNum}_glow_001.png`, color: glowOn ? sColor : null },
-        { suffix: `_${partNum}_2_001.png`, color: sColor },
-        { suffix: `_${partNum}_001.png`, color: pColor },
-        { suffix: `_${partNum}_extra_001.png`, color: WHITE }
-      ];
-
-      layers.forEach(layer => {
-        if (!layer.color) return;
-        const frameName = `${iconStr}${layer.suffix}`;
-        const bounds = framePos[frameName];
-        if (!bounds) return;
-
-        const frameCanvas = getTintedFrameCanvas(atlasImg, bounds, layer.color);
-        const ox = bounds.spriteOffset ? bounds.spriteOffset[0] : 0;
-        const oy = bounds.spriteOffset ? -bounds.spriteOffset[1] : 0;
-        ctx.drawImage(frameCanvas, ox - frameCanvas.width / 2, oy - frameCanvas.height / 2);
-      });
-
-      const children = childrenMap[partIndex] || [];
-      children.forEach(childIdx => drawNode(childIdx));
+      drawLayerFrame(ctx, `${iconStr}_${partNum}_2_001.png`, framePos, atlasImg, sColor);
+      drawLayerFrame(ctx, `${iconStr}_${partNum}_001.png`, framePos, atlasImg, pColor);
+      drawLayerFrame(ctx, `${iconStr}_${partNum}_extra_001.png`, framePos, atlasImg, WHITE);
 
       ctx.restore();
-    }
-
-    rootIndices.forEach(rootIdx => drawNode(rootIdx));
+    });
 
   } else {
-    // Simple forms (Cube, Ship, Ball, UFO, Wave, Swing, Jetpack)
-    // Structured in bottom-to-top Z-order (Glow -> Driver / Attachment -> Main Body)
-    const layers = [
-      { frame: `${iconStr}_glow_001.png`, color: glowOn ? secColor : null },
-      { frame: `${iconStr}_02_glow_001.png`, color: glowOn ? secColor : null },
-      { frame: `${iconStr}_02_2_001.png`, color: secColor },
-      { frame: `${iconStr}_02_001.png`, color: baseColor },
-      { frame: `${iconStr}_02_extra_001.png`, color: WHITE },
-      { frame: `${iconStr}_2_001.png`, color: secColor },
-      { frame: `${iconStr}_001.png`, color: baseColor },
-      { frame: `${iconStr}_extra_001.png`, color: WHITE }
-    ];
+    // --- SIMPLE FORMS & VEHICLES ---
+    const vehicleOffset = cubeOffsets[form];
 
-    layers.forEach(layer => {
-      if (!layer.color) return;
-      const bounds = framePos[layer.frame];
-      if (!bounds) return;
+    // Pass 1: Vehicle Glow Layers
+    drawLayerFrame(ctx, `${iconStr}_glow_001.png`, framePos, atlasImg, glowOn ? secColor : null);
 
-      const frameCanvas = getTintedFrameCanvas(atlasImg, bounds, layer.color);
-      const ox = bounds.spriteOffset ? bounds.spriteOffset[0] : 0;
-      const oy = bounds.spriteOffset ? -bounds.spriteOffset[1] : 0;
+    // Pass 2: Driver / Secondary Cube inside Vehicles (Ship, Jetpack, UFO)
+    if (VEHICLE_FORMS.includes(form) && vehicleOffset) {
+      try {
+        const secCubeStr = `player_${padZero(cubeId)}`;
+        const secSheet = await loadSpriteSheet(secCubeStr);
 
-      ctx.drawImage(frameCanvas, ox - frameCanvas.width / 2, oy - frameCanvas.height / 2);
-    });
+        ctx.save();
+        ctx.translate(vehicleOffset.x, -vehicleOffset.y);
+        ctx.scale(vehicleOffset.scale, vehicleOffset.scale);
+
+        drawLayerFrame(ctx, `${secCubeStr}_glow_001.png`, secSheet.framePos, secSheet.atlasImg, glowOn ? secColor : null);
+        drawLayerFrame(ctx, `${secCubeStr}_2_001.png`, secSheet.framePos, secSheet.atlasImg, secColor);
+        drawLayerFrame(ctx, `${secCubeStr}_001.png`, secSheet.framePos, secSheet.atlasImg, baseColor);
+        drawLayerFrame(ctx, `${secCubeStr}_extra_001.png`, secSheet.framePos, secSheet.atlasImg, WHITE);
+
+        ctx.restore();
+      } catch (err) {
+        console.warn("Could not load secondary cube for vehicle:", err);
+      }
+    }
+
+    // Pass 3: Vehicle Hull & Standard Form Layers
+    drawLayerFrame(ctx, `${iconStr}_2_001.png`, framePos, atlasImg, secColor);
+    drawLayerFrame(ctx, `${iconStr}_001.png`, framePos, atlasImg, baseColor);
+    drawLayerFrame(ctx, `${iconStr}_extra_001.png`, framePos, atlasImg, WHITE);
   }
 
   ctx.restore();
