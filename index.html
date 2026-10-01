@@ -55,7 +55,7 @@ const formMap = {
 const COMPLEX_FORMS = ["robot", "spider"];
 const VEHICLE_FORMS = ["ship", "bird", "jetpack"];
 
-// Offset standards for rendering secondary cube inside vehicle forms
+// Offsets for rendering secondary cube inside vehicle forms
 const cubeOffsets = {
   ship: { x: 0, y: 20, scale: 0.55 },
   bird: { x: 0, y: 24, scale: 0.55 },
@@ -90,6 +90,7 @@ function parsePlist(xmlText){
   return pos;
 }
 
+// Corrected tinting pipeline: Draws crop first, multiplies color, clips to sprite mask
 function getTintedFrameCanvas(atlasImg, bounds, colorHex){
   const [rx, ry] = bounds.pos;
   const [atlasW, atlasH] = bounds.size;
@@ -122,12 +123,15 @@ function getTintedFrameCanvas(atlasImg, bounds, colorHex){
   tinted.height = destH;
   const tCtx = tinted.getContext("2d");
 
+  // 1. Render sprite mask
+  tCtx.drawImage(crop, 0, 0);
+
+  // 2. Multiply color layer over sprite
+  tCtx.globalCompositeOperation = "multiply";
   tCtx.fillStyle = colorHex;
   tCtx.fillRect(0, 0, destW, destH);
 
-  tCtx.globalCompositeOperation = "multiply";
-  tCtx.drawImage(crop, 0, 0);
-
+  // 3. Restore sprite transparency boundary
   tCtx.globalCompositeOperation = "destination-in";
   tCtx.drawImage(crop, 0, 0);
 
@@ -169,6 +173,7 @@ async function main(){
   const col1 = parseInt(params.get("col1")) || 1;
   const col2 = parseInt(params.get("col2")) || 3;
   const glowOn = params.get("glow") === "true";
+  const showCube = params.get("showCube") !== "false"; // Set ?showCube=false in URL to hide secondary cube
 
   const mainCanvas = document.getElementById("gdCanvas");
   const ctx = mainCanvas.getContext("2d");
@@ -212,12 +217,11 @@ async function main(){
     const idleAnim = animation.idle || animation.run || Object.values(animation)[0];
     const partFrames = (idleAnim && idleAnim.frames && idleAnim.frames.length > 0) ? idleAnim.frames[0] : [];
 
-    // Map parts and sort strictly by skeletal Z-index depth
     const sortedParts = partFrames
       .map((part, originalIdx) => ({ ...part, originalIdx }))
       .sort((a, b) => (a.z ?? 0) - (b.z ?? 0));
 
-    // Pass 1: Render background Glow layers for all body parts
+    // Glow Pass
     if (glowOn) {
       sortedParts.forEach(partData => {
         const partNum = padZero(partData.part || (partData.originalIdx + 1));
@@ -235,7 +239,7 @@ async function main(){
       });
     }
 
-    // Pass 2: Render textured body parts in depth order
+    // Body Texture Pass
     sortedParts.forEach(partData => {
       const partNum = padZero(partData.part || (partData.originalIdx + 1));
       const tintOverride = info.tints ? info.tints[partData.originalIdx] : null;
@@ -262,11 +266,11 @@ async function main(){
     // --- SIMPLE FORMS & VEHICLES ---
     const vehicleOffset = cubeOffsets[form];
 
-    // Pass 1: Vehicle Glow Layers
+    // Glow Layer
     drawLayerFrame(ctx, `${iconStr}_glow_001.png`, framePos, atlasImg, glowOn ? secColor : null);
 
-    // Pass 2: Driver / Secondary Cube inside Vehicles (Ship, Jetpack, UFO)
-    if (VEHICLE_FORMS.includes(form) && vehicleOffset) {
+    // Secondary Driver Cube (Optional)
+    if (showCube && VEHICLE_FORMS.includes(form) && vehicleOffset) {
       try {
         const secCubeStr = `player_${padZero(cubeId)}`;
         const secSheet = await loadSpriteSheet(secCubeStr);
@@ -282,11 +286,11 @@ async function main(){
 
         ctx.restore();
       } catch (err) {
-        console.warn("Could not load secondary cube for vehicle:", err);
+        console.warn("Could not load secondary cube:", err);
       }
     }
 
-    // Pass 3: Vehicle Hull & Standard Form Layers
+    // Vehicle Hull / Primary Form Layers
     drawLayerFrame(ctx, `${iconStr}_2_001.png`, framePos, atlasImg, secColor);
     drawLayerFrame(ctx, `${iconStr}_001.png`, framePos, atlasImg, baseColor);
     drawLayerFrame(ctx, `${iconStr}_extra_001.png`, framePos, atlasImg, WHITE);
