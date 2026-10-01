@@ -87,8 +87,12 @@ async function main(){
     const animName = animSet.idle ? "idle" : "run";
     const poseFrame = animSet[animName].frames[0];
 
-    for (const partData of poseFrame) {
-      const partNum = padZero(partData.part || partData.p);
+    for (let i = 0; i < poseFrame.length; i++) {
+      const partData = poseFrame[i];
+
+      // Extract part number safely with fallback to loop index (1-based)
+      const rawPartNum = partData.part ?? partData.p ?? (Array.isArray(partData) ? partData[0] : null) ?? (i + 1);
+      const partNum = padZero(rawPartNum);
       const partIconStr = `${iconStr}_${partNum}`;
 
       const plistRes = await fetch(`https://gdbrowser.com/iconkit/icons/${partIconStr}-uhd.plist`);
@@ -105,12 +109,21 @@ async function main(){
         const bounds = framePos[frameName];
         if (!bounds) return;
 
+        // Position / scale / rotation handling supporting object or array structures
+        const posX = partData.pos ? partData.pos[0] : (partData.x || 0);
+        const posY = partData.pos ? partData.pos[1] : (partData.y || 0);
+        const scaleX = partData.scale ? partData.scale[0] : (partData.scaleX || 1);
+        const scaleY = partData.scale ? partData.scale[1] : (partData.scaleY || 1);
+        const flipX = partData.flipped ? partData.flipped[0] : partData.flipX;
+        const flipY = partData.flipped ? partData.flipped[1] : partData.flipY;
+        const rot = partData.rotation ?? partData.r ?? 0;
+
         const sprite = makePartSprite(texture, bounds, layer.color);
-        sprite.x += partData.pos[0];
-        sprite.y -= partData.pos[1];
-        sprite.scale.x = partData.scale[0] * (partData.flipped[0] ? -1 : 1);
-        sprite.scale.y = partData.scale[1] * (partData.flipped[1] ? -1 : 1);
-        sprite.angle = -partData.rotation;
+        sprite.x += posX;
+        sprite.y -= posY;
+        sprite.scale.x = scaleX * (flipX ? -1 : 1);
+        sprite.scale.y = scaleY * (flipY ? -1 : 1);
+        sprite.angle = -rot;
         container.addChild(sprite);
       });
     }
