@@ -105,15 +105,7 @@ async function main(){
 
   const wrap = document.getElementById("iconWrap");
 
-  // Complex forms (Robot / Spider) use server-rendered assembly to guarantee perfect part positioning and colors
-  if (COMPLEX_FORMS.includes(type)) {
-    const img = document.createElement("img");
-    img.src = `https://gdbrowser.com/icon/icon?form=${type}&icon=${id}&col1=${col1}&col2=${col2}&glow=${glowOn}`;
-    wrap.appendChild(img);
-    return;
-  }
-
-  // Simple forms rendered client-side with PixiJS v8
+  // Fetch color database for both client-side and server-rendered paths
   const apiRes = await fetch("https://gdbrowser.com/api/iconkit");
   const apiData = await apiRes.json();
   const colors = apiData.colors;
@@ -123,6 +115,26 @@ async function main(){
     return c ? (c.r << 16) + (c.g << 8) + c.b : WHITE;
   }
 
+  function toHexStr(colID){
+    let c = colors[colID];
+    if (!c) return "ffffff";
+    const r = c.r.toString(16).padStart(2, "0");
+    const g = c.g.toString(16).padStart(2, "0");
+    const b = c.b.toString(16).padStart(2, "0");
+    return `${r}${g}${b}`;
+  }
+
+  // Complex forms (Robot / Spider) using hex color strings
+  if (COMPLEX_FORMS.includes(type)) {
+    const hex1 = toHexStr(col1);
+    const hex2 = toHexStr(col2);
+    const img = document.createElement("img");
+    img.src = `https://gdbrowser.com/icon/icon?form=${type}&icon=${id}&col1=${hex1}&col2=${hex2}&glow=${glowOn ? 1 : 0}`;
+    wrap.appendChild(img);
+    return;
+  }
+
+  // Simple forms rendered via PixiJS
   const baseColor = toHex(col1);
   const secColor = toHex(col2);
 
@@ -139,15 +151,23 @@ async function main(){
   const framePos = parsePlist(await plistRes.text());
   const texture = await PIXI.Assets.load(`https://gdbrowser.com/iconkit/icons/${iconStr}-uhd.png`);
 
-  // Explicit layer matching prevents extra sub-sprites (like ship/jetpack attachments) from misaligning
-  const layers = [
+  // Target base body layers and driver/thruster attachment layers separately
+  const mainLayers = [
     { frame: `${iconStr}_glow_001.png`, color: glowOn ? secColor : null },
     { frame: `${iconStr}_2_001.png`, color: secColor },
     { frame: `${iconStr}_001.png`, color: baseColor },
     { frame: `${iconStr}_extra_001.png`, color: WHITE }
   ];
 
-  layers.forEach(layer => {
+  // Optional secondary attachment sub-sprites (used in ships/jetpacks)
+  const attachLayers = [
+    { frame: `${iconStr}_02_glow_001.png`, color: glowOn ? secColor : null },
+    { frame: `${iconStr}_02_2_001.png`, color: secColor },
+    { frame: `${iconStr}_02_001.png`, color: baseColor },
+    { frame: `${iconStr}_02_extra_001.png`, color: WHITE }
+  ];
+
+  mainLayers.concat(attachLayers).forEach(layer => {
     if (layer.color === null) return;
     const bounds = framePos[layer.frame];
     if (!bounds) return;
