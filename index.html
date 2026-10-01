@@ -95,7 +95,9 @@ async function main(){
       const partNum = padZero(rawPartNum);
       const partIconStr = `${iconStr}_${partNum}`;
 
-      const plistRes = await fetch(`https://gdbrowser.com/iconkit/icons/${partIconStr}-uhd.plist`);
+      // Proxied fetch to bypass GDBrowser's CORS restrictions on static .plist files
+      const plistUrl = `https://gdbrowser.com/iconkit/icons/${partIconStr}-uhd.plist`;
+      const plistRes = await fetch(`https://corsproxy.io/?${encodeURIComponent(plistUrl)}`);
       if (!plistRes.ok) continue;
 
       const framePos = parsePlist(await plistRes.text());
@@ -109,7 +111,6 @@ async function main(){
         const bounds = framePos[frameName];
         if (!bounds) return;
 
-        // Position / scale / rotation handling supporting object or array structures
         const posX = partData.pos ? partData.pos[0] : (partData.x || 0);
         const posY = partData.pos ? partData.pos[1] : (partData.y || 0);
         const scaleX = partData.scale ? partData.scale[0] : (partData.scaleX || 1);
