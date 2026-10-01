@@ -27,6 +27,9 @@ const ROTATE_MODE = num("rotmode", 2); // how rotated sheet frames are un-rotate
 const ROT_SIGN    = num("rotsign", 1); // -1 if robot/spider limbs bend the wrong way
 const ANGLE       = num("angle", 0);   // whole-icon rotation (should stay 0 now)
 const SHOW_DOME   = Q.get("dome") === "1"; // draw the _3_001 layer (ship/ufo glass)
+const CANVAS      = num("canvas", 270);    // canvas size in px (page is 300 tall, bob moves up 15)
+const PAD         = num("pad", 6);         // keep-clear margin so nothing touches the edge
+const ZOOM        = num("zoom", 1);        // optional manual size multiplier
 
 // ---------- helpers ----------
 function padZero(num){ num = +num; return num < 10 ? "0"+num : ""+num; }
@@ -110,7 +113,7 @@ async function main(){
   const iconStr = `${form}_${padZero(id)}`;
 
   const app = new PIXI.Application();
-  await app.init({ width:150, height:150, backgroundAlpha:0 });
+  await app.init({ width:CANVAS, height:CANVAS, backgroundAlpha:0 });
   document.getElementById("iconWrap").appendChild(app.canvas);
 
   const container = new PIXI.Container();
@@ -172,8 +175,16 @@ async function main(){
   }
 
   container.addChild(glowLayer, bodyLayer);
-  container.x = 75; container.y = 75;
+  container.x = CANVAS / 2; container.y = CANVAS / 2;
   container.angle = ANGLE;
+
+  // Auto-fit: only ever shrinks, so relative sizes between forms stay consistent,
+  // but nothing can overflow the canvas.
+  const lb = container.getLocalBounds();
+  const reach = Math.max(Math.abs(lb.minX), Math.abs(lb.maxX), Math.abs(lb.minY), Math.abs(lb.maxY));
+  const fit = reach > 0 ? Math.min(1, (CANVAS / 2 - PAD) / reach) : 1;
+  container.scale.set(fit * ZOOM);
+  console.log("fit scale:", fit, "reach:", reach);
   app.stage.addChild(container);
 }
 
