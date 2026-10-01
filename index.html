@@ -14,10 +14,10 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/8.0.0/pixi.min.js"></script>
 <script>
 const WHITE = 0xffffff;
-const formMap = { cube:"player", ball:"player_ball", ufo:"bird", wave:"dart", ship:"ship", swing:"swing", jetpack:"jetpack" };
+const formMap = { cube:"player", ball:"player_ball", ufo:"bird", wave:"dart", ship:"ship", swing:"swing", jetpack:"jetpack", robot:"robot", spider:"spider" };
+const COMPLEX_FORMS = ["robot", "spider"];
 
 function padZero(num){ num = +num; return num < 10 ? "0"+num : ""+num; }
-
 function parseWeirdArray(data){ return data.replace(/[^0-9,-.]/g,"").split(",").map(x=>+x); }
 
 function parsePlist(xmlText){
@@ -45,6 +45,17 @@ function parsePlist(xmlText){
   return pos;
 }
 
+function makePartSprite(texture, bounds, tint){
+  const rect = new PIXI.Rectangle(bounds.pos[0], bounds.pos[1], bounds.size[0], bounds.size[1]);
+  const partTexture = new PIXI.Texture({ source: texture.source, frame: rect });
+  const sprite = new PIXI.Sprite(partTexture);
+  sprite.tint = tint;
+  sprite.anchor.set(0.5);
+  sprite.x = (bounds.spriteOffset ? bounds.spriteOffset[0] : 0);
+  sprite.y = -(bounds.spriteOffset ? bounds.spriteOffset[1] : 0);
+  return sprite;
+}
+
 async function main(){
   const params = new URLSearchParams(window.location.search);
   const type = params.get("form") || "cube";
@@ -53,9 +64,9 @@ async function main(){
   const col2 = parseInt(params.get("col2"));
   const glowOn = params.get("glow") === "true";
 
-  const colorRes = await fetch("https://gdbrowser.com/api/iconkit");
-  const colorData = await colorRes.json();
-  const colors = colorData.colors;
+  const apiRes = await fetch("https://gdbrowser.com/api/iconkit");
+  const apiData = await apiRes.json();
+  const colors = apiData.colors;
   function toHex(colID){
     let c = colors[colID];
     return c ? (c.r<<16)+(c.g<<8)+c.b : WHITE;
@@ -64,41 +75,71 @@ async function main(){
   const form = formMap[type.toLowerCase()] || type.toLowerCase();
   const iconStr = `${form}_${padZero(id)}`;
 
-  const plistRes = await fetch(`https://gdbrowser.com/iconkit/icons/${iconStr}-uhd.plist`);
-  const plistText = await plistRes.text();
-  const framePos = parsePlist(plistText);
-
   const app = new PIXI.Application();
   await app.init({ width:150, height:150, backgroundAlpha:0 });
   document.getElementById("iconWrap").appendChild(app.canvas);
 
-  const texture = await PIXI.Assets.load(`https://gdbrowser.com/iconkit/icons/${iconStr}-uhd.png`);
-
-  const layerKeys = [
-    { suffix: "_glow_001.png", color: glowOn ? toHex(col2) : null },
-    { suffix: "_2_001.png", color: toHex(col2) },
-    { suffix: "_001.png", color: toHex(col1) }
-  ];
-
   const container = new PIXI.Container();
-  layerKeys.forEach(layer => {
-    if (layer.color === null) return;
-    const frameName = iconStr + layer.suffix;
-    const bounds = framePos[frameName];
-    if (!bounds) return;
-    const rect = new PIXI.Rectangle(bounds.pos[0], bounds.pos[1], bounds.size[0], bounds.size[1]);
-    const partTexture = new PIXI.Texture({ source: texture.source, frame: rect });
-    const sprite = new PIXI.Sprite(partTexture);
-    sprite.tint = layer.color;
-    sprite.anchor.set(0.5);
-    sprite.x = (bounds.spriteOffset ? bounds.spriteOffset[0] : 0);
-    sprite.y = -(bounds.spriteOffset ? bounds.spriteOffset[1] : 0);
-    container.addChild(sprite);
-  });
+
+  if (COMPLEX_FORMS.includes(form)){
+    // Robot/spider: multiple parts positioned per idle-frame data
+    const robotData = apiData.robotAnimations;
+    const info = robotData.info[form];
+    const idleFrame = robotData.animations[form].idle.frames[0];
+
+    // Each part has its own sprite sheet (named by part index), fetched once
+    for (let partIndex = 0; partIndex < idleFrame.length; partIndex++){
+      const partData = idleFrame[partIndex];
+      const partName = padZero(partData.part || (partIndex+1));
+      const partIconStr = `${iconStr}_${partName}`;
+
+      const plistRes = await fetch(`https://gdbrowser.com/iconkit/icons/${partIconStr}-uhd.plist`);
+      if (!plistRes.ok) continue;
+      const framePos = parsePlist(await plistRes.text());
+      const texture = await PIXI.Assets.load(`https://gdbrowser.com/iconkit/icons/${partIconStr}-uhd.png`);
+
+      const tintInfo = info.tints ? info.tints[partIndex] : 0;
+      const baseColor = toHex(col1);
+      const secColor = toHex(col2);
+
+      [
+        { suffix: "_001.png", color: baseColor },
+        { suffix: "_2_001.png", color: secColor }
+      ].forEach(layer => {
+        const frameName = partIconStr + layer.suffix;
+        const bounds = framePos[frameName];
+        if (!bounds) return;
+        const sprite = makePartSprite(texture, bounds, layer.color);
+        sprite.x += partData.pos[0];
+        sprite.y -= partData.pos[1];
+        sprite.scale.x = partData.scale[0] * (partData.flipped[0] ? -1 : 1);
+        sprite.scale.y = partData.scale[1] * (partData.flipped[1] ? -1 : 1);
+        sprite.angle = partData.rotation;
+        container.addChild(sprite);
+      });
+    }
+  } else {
+    // Simple single-layer forms
+    const plistRes = await fetch(`https://gdbrowser.com/iconkit/icons/${iconStr}-uhd.plist`);
+    const framePos = parsePlist(await plistRes.text());
+    const texture = await PIXI.Assets.load(`https://gdbrowser.com/iconkit/icons/${iconStr}-uhd.png`);
+
+    [
+      { suffix: "_glow_001.png", color: glowOn ? toHex(col2) : null },
+      { suffix: "_2_001.png", color: toHex(col2) },
+      { suffix: "_001.png", color: toHex(col1) }
+    ].forEach(layer => {
+      if (layer.color === null) return;
+      const frameName = iconStr + layer.suffix;
+      const bounds = framePos[frameName];
+      if (!bounds) return;
+      container.addChild(makePartSprite(texture, bounds, layer.color));
+    });
+  }
 
   container.x = 75; container.y = 75;
-  app.stage.addChild(container);
   container.angle = -90;
+  app.stage.addChild(container);
 }
 
 main();
