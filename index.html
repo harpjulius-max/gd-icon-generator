@@ -23,10 +23,9 @@
     justify-content: center;
     animation: bob 1.6s ease-in-out infinite; 
   }
-  #iconWrap img {
-    width: 100%;
-    height: 100%;
-    object-fit: contain;
+  canvas {
+    width: 150px;
+    height: 150px;
   }
   @keyframes bob { 
     0% { transform: translateY(0px); } 
@@ -36,9 +35,86 @@
 </style>
 </head>
 <body>
-<div id="iconWrap"></div>
+<div id="iconWrap">
+  <canvas id="gdCanvas" width="300" height="300"></canvas>
+</div>
 
 <script>
+const WHITE = "#ffffff";
+const formMap = { 
+  cube: "player", 
+  ball: "player_ball", 
+  ufo: "bird", 
+  wave: "dart", 
+  ship: "ship", 
+  swing: "swing", 
+  jetpack: "jetpack", 
+  robot: "robot", 
+  spider: "spider" 
+};
+const COMPLEX_FORMS = ["robot", "spider"];
+
+function padZero(num){ num = +num; return num < 10 ? "0" + num : "" + num; }
+function parseWeirdArray(data){ return data.replace(/[^0-9,-.]/g, "").split(",").map(x => +x); }
+
+function parsePlist(xmlText){
+  let dom = new DOMParser().parseFromString(xmlText, "text/xml");
+  let frames = dom.children[0].children[0].children[1].children;
+  let pos = {};
+  for (let i = 0; i < frames.length; i += 2){
+    let name = frames[i].innerHTML;
+    let data = frames[i+1].children;
+    let rotated = false;
+    pos[name] = {};
+    for (let n = 0; n < data.length; n += 2){
+      let key = data[n].innerHTML;
+      let val = data[n+1].innerHTML;
+      if (key === "spriteOffset") pos[name].spriteOffset = parseWeirdArray(val);
+      if (key === "textureRotated") rotated = data[n+1].outerHTML.includes("true");
+      if (key === "textureRect"){
+        let arr = val.slice(1, -1).split("},{").map(x => parseWeirdArray(x));
+        pos[name].pos = arr[0];
+        pos[name].size = arr[1];
+      }
+    }
+    pos[name].rotated = rotated;
+  }
+  return pos;
+}
+
+// Un-rotates plist frames stored sideways and tints them to exact RGB color
+function getTintedFrameCanvas(atlasImg, bounds, colorHex){
+  const [rx, ry] = bounds.pos;
+  const isRotated = bounds.rotated;
+  const frameW = isRotated ? bounds.size[1] : bounds.size[0];
+  const frameH = isRotated ? bounds.size[0] : bounds.size[1];
+  const destW = bounds.size[0];
+  const destH = bounds.size[1];
+
+  const c = document.createElement("canvas");
+  c.width = destW;
+  c.height = destH;
+  const ctx = c.getContext("2d");
+
+  if (isRotated) {
+    ctx.save();
+    ctx.translate(destW / 2, destH / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.drawImage(atlasImg, rx, ry, frameW, frameH, -frameH / 2, -frameW / 2, frameW, frameH);
+    ctx.restore();
+  } else {
+    ctx.drawImage(atlasImg, rx, ry, frameW, frameH, 0, 0, destW, destH);
+  }
+
+  if (colorHex && colorHex !== "#ffffff") {
+    ctx.globalCompositeOperation = "source-in";
+    ctx.fillStyle = colorHex;
+    ctx.fillRect(0, 0, destW, destH);
+  }
+
+  return c;
+}
+
 async function main(){
   const params = new URLSearchParams(window.location.search);
   const type = (params.get("form") || "cube").toLowerCase();
@@ -47,21 +123,122 @@ async function main(){
   const col2 = parseInt(params.get("col2")) || 3;
   const glowOn = params.get("glow") === "true";
 
-  const wrap = document.getElementById("iconWrap");
+  const mainCanvas = document.getElementById("gdCanvas");
+  const ctx = mainCanvas.getContext("2d");
+  ctx.clearRect(0, 0, 300, 300);
 
-  // Render all icons directly from GDBrowser's server assembler
-  const img = document.createElement("img");
-  img.src = `https://gdbrowser.com/icon/icon?form=${type}&icon=${id}&col1=${col1}&col2=${col2}&glow=${glowOn ? 1 : 0}`;
-  
-  img.onerror = () => {
-    // Fallback if GDBrowser API fails
-    console.error("Failed to load icon from server.");
-  };
+  let colors = {};
+  let robotData = null;
+  try {
+    const apiRes = await fetch("https://gdbrowser.com/api/iconkit");
+    const apiData = await apiRes.json();
+    colors = apiData.colors || {};
+    robotData = apiData.robotAnimations || null;
+  } catch(e) {
+    console.warn("Could not fetch iconkit metadata:", e);
+  }
 
-  wrap.appendChild(img);
+  function toHexStr(colID){
+    let c = colors[colID];
+    if (!c) return "#ffffff";
+    const r = c.r.toString(16).padStart(2, "0");
+    const g = c.g.toString(16).padStart(2, "0");
+    const b = c.b.toString(16).padStart(2, "0");
+    return `#${r}${g}${b}`;
+  }
+
+  const baseColor = toHexStr(col1);
+  const secColor = toHexStr(col2);
+
+  const form = formMap[type] || type;
+  const iconStr = `${form}_${padZero(id)}`;
+
+  const plistRes = await fetch(`https://gdbrowser.com/iconkit/icons/${iconStr}-uhd.plist`);
+  const framePos = parsePlist(await plistRes.text());
+
+  const atlasImg = new Image();
+  atlasImg.crossOrigin = "anonymous";
+  atlasImg.src = `https://gdbrowser.com/iconkit/icons/${iconStr}-uhd.png`;
+  await new Promise((resolve, reject) => {
+    atlasImg.onload = resolve;
+    atlasImg.onerror = reject;
+  });
+
+  // Apply master center and 90-degree rotation across all forms
+  ctx.save();
+  ctx.translate(150, 150);
+  ctx.rotate((90 * Math.PI) / 180);
+
+  if (COMPLEX_FORMS.includes(type) && robotData) {
+    const info = robotData.info[type];
+    const idleFrame = robotData.animations[type].idle.frames[0];
+
+    for (let partIndex = 0; partIndex < idleFrame.length; partIndex++){
+      const partData = idleFrame[partIndex];
+      const partNum = padZero(partData.part || (partIndex + 1));
+
+      const tintOverride = info.tints ? info.tints[partIndex] : null;
+      let pColor = baseColor;
+      let sColor = secColor;
+      if (tintOverride === 1) sColor = baseColor;
+      if (tintOverride === 2) pColor = secColor;
+
+      ctx.save();
+      ctx.translate(partData.pos[0], -partData.pos[1]);
+      ctx.rotate((-partData.rotation * Math.PI) / 180);
+      ctx.scale(
+        partData.scale[0] * (partData.flipped[0] ? -1 : 1),
+        partData.scale[1] * (partData.flipped[1] ? -1 : 1)
+      );
+
+      const layers = [
+        { suffix: `_${partNum}_glow_001.png`, color: glowOn ? sColor : null },
+        { suffix: `_${partNum}_2_001.png`, color: sColor },
+        { suffix: `_${partNum}_001.png`, color: pColor },
+        { suffix: `_${partNum}_extra_001.png`, color: WHITE }
+      ];
+
+      layers.forEach(layer => {
+        if (!layer.color) return;
+        const frameName = `${iconStr}${layer.suffix}`;
+        const bounds = framePos[frameName];
+        if (!bounds) return;
+
+        const frameCanvas = getTintedFrameCanvas(atlasImg, bounds, layer.color);
+        const ox = bounds.spriteOffset ? bounds.spriteOffset[0] : 0;
+        const oy = bounds.spriteOffset ? -bounds.spriteOffset[1] : 0;
+
+        ctx.drawImage(frameCanvas, ox - bounds.size[0] / 2, oy - bounds.size[1] / 2);
+      });
+
+      ctx.restore();
+    }
+  } else {
+    // Simple forms (Cube, Ship, Ball, UFO, Wave, Swing, Jetpack)
+    const layers = [
+      { frame: `${iconStr}_glow_001.png`, color: glowOn ? secColor : null },
+      { frame: `${iconStr}_2_001.png`, color: secColor },
+      { frame: `${iconStr}_001.png`, color: baseColor },
+      { frame: `${iconStr}_extra_001.png`, color: WHITE }
+    ];
+
+    layers.forEach(layer => {
+      if (!layer.color) return;
+      const bounds = framePos[layer.frame];
+      if (!bounds) return;
+
+      const frameCanvas = getTintedFrameCanvas(atlasImg, bounds, layer.color);
+      const ox = bounds.spriteOffset ? bounds.spriteOffset[0] : 0;
+      const oy = bounds.spriteOffset ? -bounds.spriteOffset[1] : 0;
+
+      ctx.drawImage(frameCanvas, ox - bounds.size[0] / 2, oy - bounds.size[1] / 2);
+    });
+  }
+
+  ctx.restore();
 }
 
-main();
+main().catch(err => console.error("Render failed:", err));
 </script>
 </body>
 </html>
