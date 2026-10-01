@@ -4,303 +4,139 @@
 <meta charset="UTF-8">
 <title>GD Icon Render</title>
 <style>
-  html, body { 
-    margin: 0; 
-    padding: 0; 
-    width: 300px; 
-    height: 300px; 
-    background: #000; 
-    display: flex; 
-    align-items: center; 
-    justify-content: center; 
-    overflow: hidden; 
-  }
-  #iconWrap { 
-    width: 150px;
-    height: 150px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    animation: bob 1.6s ease-in-out infinite; 
-  }
-  canvas {
-    width: 150px;
-    height: 150px;
-  }
-  @keyframes bob { 
-    0% { transform: translateY(0px); } 
-    50% { transform: translateY(-15px); } 
-    100% { transform: translateY(0px); } 
-  }
+  html, body { margin:0; padding:0; width:300px; height:300px; background:#000; display:flex; align-items:center; justify-content:center; overflow:hidden; }
+  #iconWrap { animation: bob 1.6s ease-in-out infinite; }
+  @keyframes bob { 0%{transform:translateY(0px);} 50%{transform:translateY(-15px);} 100%{transform:translateY(0px);} }
 </style>
 </head>
 <body>
-<div id="iconWrap">
-  <canvas id="gdCanvas" width="300" height="300"></canvas>
-</div>
-
+<div id="iconWrap"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/8.0.0/pixi.min.js"></script>
 <script>
-const WHITE = "#ffffff";
-const formMap = { 
-  cube: "player", 
-  ball: "player_ball", 
-  ufo: "bird", 
-  wave: "dart", 
-  ship: "ship", 
-  swing: "swing", 
-  jetpack: "jetpack", 
-  robot: "robot", 
-  spider: "spider" 
-};
+const WHITE = 0xffffff;
+const formMap = { cube:"player", ball:"player_ball", ufo:"bird", wave:"dart", ship:"ship", swing:"swing", jetpack:"jetpack", robot:"robot", spider:"spider" };
 const COMPLEX_FORMS = ["robot", "spider"];
-const VEHICLE_FORMS = ["ship", "bird", "jetpack"];
 
-const vehicleOffsets = {
-  ship: { x: 0, y: 12, scale: 0.55 },
-  bird: { x: 0, y: 16, scale: 0.55 },
-  jetpack: { x: 8, y: 4, scale: 0.60 }
-};
-
-function padZero(num){ num = +num; return num < 10 ? "0" + num : "" + num; }
-function parseWeirdArray(data){ return data.replace(/[^0-9,-.]/g, "").split(",").map(x => +x); }
+function padZero(num){ num = +num; return num < 10 ? "0"+num : ""+num; }
+function parseWeirdArray(data){ return data.replace(/[^0-9,-.]/g,"").split(",").map(x=>+x); }
 
 function parsePlist(xmlText){
   let dom = new DOMParser().parseFromString(xmlText, "text/xml");
   let frames = dom.children[0].children[0].children[1].children;
   let pos = {};
-  for (let i = 0; i < frames.length; i += 2){
+  for (let i=0;i<frames.length;i+=2){
     let name = frames[i].innerHTML;
     let data = frames[i+1].children;
     let rotated = false;
     pos[name] = {};
-    for (let n = 0; n < data.length; n += 2){
+    for (let n=0;n<data.length;n+=2){
       let key = data[n].innerHTML;
       let val = data[n+1].innerHTML;
       if (key === "spriteOffset") pos[name].spriteOffset = parseWeirdArray(val);
       if (key === "textureRotated") rotated = data[n+1].outerHTML.includes("true");
       if (key === "textureRect"){
-        let arr = val.slice(1, -1).split("},{").map(x => parseWeirdArray(x));
+        let arr = val.slice(1,-1).split("},{").map(x=>parseWeirdArray(x));
         pos[name].pos = arr[0];
         pos[name].size = arr[1];
       }
     }
-    pos[name].rotated = rotated;
+    if (rotated) pos[name].size.reverse();
   }
   return pos;
 }
 
-// Applies color strictly inside the sprite while keeping black outlines intact underneath
-function getTintedFrameCanvas(atlasImg, bounds, colorHex){
-  const [rx, ry] = bounds.pos;
-  const [atlasW, atlasH] = bounds.size;
-  const isRotated = bounds.rotated;
-
-  const destW = isRotated ? atlasH : atlasW;
-  const destH = isRotated ? atlasW : atlasH;
-
-  const crop = document.createElement("canvas");
-  crop.width = destW;
-  crop.height = destH;
-  const cCtx = crop.getContext("2d");
-
-  if (isRotated) {
-    cCtx.save();
-    cCtx.translate(destW / 2, destH / 2);
-    cCtx.rotate(-Math.PI / 2);
-    cCtx.drawImage(atlasImg, rx, ry, atlasW, atlasH, -atlasW / 2, -atlasH / 2, atlasW, atlasH);
-    cCtx.restore();
-  } else {
-    cCtx.drawImage(atlasImg, rx, ry, atlasW, atlasH, 0, 0, destW, destH);
-  }
-
-  if (!colorHex || colorHex.toLowerCase() === "#ffffff") {
-    return crop;
-  }
-
-  const tinted = document.createElement("canvas");
-  tinted.width = destW;
-  tinted.height = destH;
-  const tCtx = tinted.getContext("2d");
-
-  // Paint the tint color
-  tCtx.fillStyle = colorHex;
-  tCtx.fillRect(0, 0, destW, destH);
-
-  // Mask color to non-transparent pixels only
-  tCtx.globalCompositeOperation = "destination-in";
-  tCtx.drawImage(crop, 0, 0);
-
-  // Blend original outlines and details back on top via multiply
-  tCtx.globalCompositeOperation = "multiply";
-  tCtx.drawImage(crop, 0, 0);
-
-  return tinted;
-}
-
-async function loadSpriteSheet(iconStr) {
-  const plistRes = await fetch(`https://gdbrowser.com/iconkit/icons/${iconStr}-uhd.plist`);
-  const framePos = parsePlist(await plistRes.text());
-
-  const atlasImg = new Image();
-  atlasImg.crossOrigin = "anonymous";
-  atlasImg.src = `https://gdbrowser.com/iconkit/icons/${iconStr}-uhd.png`;
-  await new Promise((resolve, reject) => {
-    atlasImg.onload = resolve;
-    atlasImg.onerror = reject;
-  });
-
-  return { framePos, atlasImg };
-}
-
-function drawLayerFrame(ctx, frameName, framePos, atlasImg, colorHex) {
-  if (!colorHex) return;
-  const bounds = framePos[frameName];
-  if (!bounds) return;
-
-  const frameCanvas = getTintedFrameCanvas(atlasImg, bounds, colorHex);
-  const ox = bounds.spriteOffset ? bounds.spriteOffset[0] : 0;
-  const oy = bounds.spriteOffset ? -bounds.spriteOffset[1] : 0;
-
-  ctx.drawImage(frameCanvas, ox - frameCanvas.width / 2, oy - frameCanvas.height / 2);
+function makePartSprite(texture, bounds, tint){
+  const rect = new PIXI.Rectangle(bounds.pos[0], bounds.pos[1], bounds.size[0], bounds.size[1]);
+  const partTexture = new PIXI.Texture({ source: texture.source, frame: rect });
+  const sprite = new PIXI.Sprite(partTexture);
+  sprite.tint = tint;
+  sprite.anchor.set(0.5);
+  sprite.x = (bounds.spriteOffset ? bounds.spriteOffset[0] : 0);
+  sprite.y = -(bounds.spriteOffset ? bounds.spriteOffset[1] : 0);
+  return sprite;
 }
 
 async function main(){
   const params = new URLSearchParams(window.location.search);
-  const type = (params.get("form") || "cube").toLowerCase();
-  const id = parseInt(params.get("icon")) || 1;
-  const cubeId = parseInt(params.get("cube")) || 1;
-  const col1 = parseInt(params.get("col1")) || 1;
-  const col2 = parseInt(params.get("col2")) || 3;
+  const type = params.get("form") || "cube";
+  const id = parseInt(params.get("icon"));
+  const col1 = parseInt(params.get("col1"));
+  const col2 = parseInt(params.get("col2"));
   const glowOn = params.get("glow") === "true";
-  const showCube = params.get("showCube") !== "false";
 
-  const mainCanvas = document.getElementById("gdCanvas");
-  const ctx = mainCanvas.getContext("2d");
-  ctx.clearRect(0, 0, 300, 300);
-
-  let colors = {};
-  let robotData = null;
-  try {
-    const apiRes = await fetch("https://gdbrowser.com/api/iconkit");
-    const apiData = await apiRes.json();
-    colors = apiData.colors || {};
-    robotData = apiData.robotAnimations || null;
-  } catch(e) {
-    console.warn("Could not fetch iconkit metadata:", e);
-  }
-
-  function toHexStr(colID){
+  const apiRes = await fetch("https://gdbrowser.com/api/iconkit");
+  const apiData = await apiRes.json();
+  const colors = apiData.colors;
+  function toHex(colID){
     let c = colors[colID];
-    if (!c) return "#ffffff";
-    const r = c.r.toString(16).padStart(2, "0");
-    const g = c.g.toString(16).padStart(2, "0");
-    const b = c.b.toString(16).padStart(2, "0");
-    return `#${r}${g}${b}`;
+    return c ? (c.r<<16)+(c.g<<8)+c.b : WHITE;
   }
 
-  const baseColor = toHexStr(col1);
-  const secColor = toHexStr(col2);
-
-  const form = formMap[type] || type;
+  const form = formMap[type.toLowerCase()] || type.toLowerCase();
   const iconStr = `${form}_${padZero(id)}`;
 
-  const { framePos, atlasImg } = await loadSpriteSheet(iconStr);
+  const app = new PIXI.Application();
+  await app.init({ width:150, height:150, backgroundAlpha:0 });
+  document.getElementById("iconWrap").appendChild(app.canvas);
 
-  ctx.save();
-  ctx.translate(150, 150);
+  const container = new PIXI.Container();
 
-  // --- COMPLEX FORMS (ROBOT / SPIDER) ---
-  if (COMPLEX_FORMS.includes(type) && robotData && robotData.animations[type]) {
-    const info = robotData.info[type] || {};
-    const animation = robotData.animations[type];
-    const idleAnim = animation.idle || animation.run || Object.values(animation)[0];
-    const partFrames = (idleAnim && idleAnim.frames && idleAnim.frames.length > 0) ? idleAnim.frames[0] : [];
+  if (COMPLEX_FORMS.includes(form)){
+  const robotData = apiData.robotAnimations;
+  const animSet = robotData.animations[form];
+  const animName = animSet.idle ? "idle" : "run";
+  const poseFrame = animSet[animName].frames[0];
 
-    const sortedParts = partFrames
-      .map((part, originalIdx) => ({ ...part, originalIdx }))
-      .sort((a, b) => (a.z ?? 0) - (b.z ?? 0));
+  for (const partData of poseFrame){
+    const partNum = partData.part;
+    const partIconStr = `${iconStr}_${partNum}`;
 
-    // Render Glow Pass
-    if (glowOn) {
-      sortedParts.forEach(partData => {
-        const partNum = padZero(partData.part || (partData.originalIdx + 1));
-        const frameName = `${iconStr}_${partNum}_glow_001.png`;
-        if (!framePos[frameName]) return;
+    const plistRes = await fetch(`https://gdbrowser.com/iconkit/icons/${partIconStr}-uhd.plist`);
+    if (!plistRes.ok) continue;
+    const framePos = parsePlist(await plistRes.text());
+    const texture = await PIXI.Assets.load(`https://gdbrowser.com/iconkit/icons/${partIconStr}-uhd.png`);
 
-        ctx.save();
-        ctx.translate(partData.pos[0] * 2, -partData.pos[1] * 2);
-        ctx.rotate((partData.rotation * Math.PI) / 180);
-        const flipX = partData.flipped && partData.flipped[0] ? -1 : 1;
-        const flipY = partData.flipped && partData.flipped[1] ? -1 : 1;
-        ctx.scale((partData.scale ? partData.scale[0] : 1) * flipX, (partData.scale ? partData.scale[1] : 1) * flipY);
-
-        drawLayerFrame(ctx, frameName, framePos, atlasImg, secColor);
-        ctx.restore();
-      });
-    }
-
-    // Render Body Parts Pass
-    sortedParts.forEach(partData => {
-      const partNum = padZero(partData.part || (partData.originalIdx + 1));
-      const tintOverride = info.tints ? info.tints[partData.originalIdx] : null;
-
-      let pColor = baseColor;
-      let sColor = secColor;
-      if (tintOverride === 1) sColor = baseColor;
-      if (tintOverride === 2) pColor = secColor;
-
-      ctx.save();
-      ctx.translate(partData.pos[0] * 2, -partData.pos[1] * 2);
-      ctx.rotate((partData.rotation * Math.PI) / 180);
-      const flipX = partData.flipped && partData.flipped[0] ? -1 : 1;
-      const flipY = partData.flipped && partData.flipped[1] ? -1 : 1;
-      ctx.scale((partData.scale ? partData.scale[0] : 1) * flipX, (partData.scale ? partData.scale[1] : 1) * flipY);
-
-      drawLayerFrame(ctx, `${iconStr}_${partNum}_001.png`, framePos, atlasImg, pColor);
-      drawLayerFrame(ctx, `${iconStr}_${partNum}_2_001.png`, framePos, atlasImg, sColor);
-      drawLayerFrame(ctx, `${iconStr}_${partNum}_extra_001.png`, framePos, atlasImg, WHITE);
-
-      ctx.restore();
+    [
+      { suffix: "_001.png", color: toHex(col1) },
+      { suffix: "_2_001.png", color: toHex(col2) }
+    ].forEach(layer => {
+      const frameName = partIconStr + layer.suffix;
+      const bounds = framePos[frameName];
+      if (!bounds) return;
+      const sprite = makePartSprite(texture, bounds, layer.color);
+      sprite.x += partData.pos[0];
+      sprite.y -= partData.pos[1];
+      sprite.scale.x = partData.scale[0] * (partData.flipped[0] ? -1 : 1);
+      sprite.scale.y = partData.scale[1] * (partData.flipped[1] ? -1 : 1);
+      sprite.angle = -partData.rotation;
+      container.addChild(sprite);
     });
+  }
+} else {
+    // Simple single-layer forms
+    const plistRes = await fetch(`https://gdbrowser.com/iconkit/icons/${iconStr}-uhd.plist`);
+    const framePos = parsePlist(await plistRes.text());
+    const texture = await PIXI.Assets.load(`https://gdbrowser.com/iconkit/icons/${iconStr}-uhd.png`);
 
-  } else {
-    // --- SIMPLE FORMS & VEHICLES ---
-    const vOffset = vehicleOffsets[form];
-
-    // Glow layer
-    drawLayerFrame(ctx, `${iconStr}_glow_001.png`, framePos, atlasImg, glowOn ? secColor : null);
-
-    // Inner vehicle cube driver
-    if (showCube && VEHICLE_FORMS.includes(form) && vOffset) {
-      try {
-        const secCubeStr = `player_${padZero(cubeId)}`;
-        const secSheet = await loadSpriteSheet(secCubeStr);
-
-        ctx.save();
-        ctx.translate(vOffset.x, -vOffset.y);
-        ctx.scale(vOffset.scale, vOffset.scale);
-
-        drawLayerFrame(ctx, `${secCubeStr}_glow_001.png`, secSheet.framePos, secSheet.atlasImg, glowOn ? secColor : null);
-        drawLayerFrame(ctx, `${secCubeStr}_001.png`, secSheet.framePos, secSheet.atlasImg, baseColor);
-        drawLayerFrame(ctx, `${secCubeStr}_2_001.png`, secSheet.framePos, secSheet.atlasImg, secColor);
-        drawLayerFrame(ctx, `${secCubeStr}_extra_001.png`, secSheet.framePos, secSheet.atlasImg, WHITE);
-
-        ctx.restore();
-      } catch (err) {
-        console.warn("Could not load secondary cube:", err);
-      }
-    }
-
-    // Main icon layers in exact GD order (Primary -> Secondary -> White Details)
-    drawLayerFrame(ctx, `${iconStr}_001.png`, framePos, atlasImg, baseColor);
-    drawLayerFrame(ctx, `${iconStr}_2_001.png`, framePos, atlasImg, secColor);
-    drawLayerFrame(ctx, `${iconStr}_extra_001.png`, framePos, atlasImg, WHITE);
+    [
+      { suffix: "_glow_001.png", color: glowOn ? toHex(col2) : null },
+      { suffix: "_2_001.png", color: toHex(col2) },
+      { suffix: "_001.png", color: toHex(col1) }
+    ].forEach(layer => {
+      if (layer.color === null) return;
+      const frameName = iconStr + layer.suffix;
+      const bounds = framePos[frameName];
+      if (!bounds) return;
+      container.addChild(makePartSprite(texture, bounds, layer.color));
+    });
   }
 
-  ctx.restore();
+  container.x = 75; container.y = 75;
+  container.angle = -90;
+  app.stage.addChild(container);
 }
 
-main().catch(err => console.error("Render failed:", err));
+main();
 </script>
 </body>
 </html>
