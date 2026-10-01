@@ -82,56 +82,53 @@ async function main(){
   const container = new PIXI.Container();
 
   if (COMPLEX_FORMS.includes(form)){
-    // Robot/spider: Load unified body asset sheet
+    // Restored original individual part loading per limb
     const robotData = apiData.robotAnimations;
     const info = robotData.info[form];
     const idleFrame = robotData.animations[form].idle.frames[0];
 
-    // Fetch the single plist & PNG sprite sheet for this robot/spider ID
-    const plistRes = await fetch(`https://gdbrowser.com/iconkit/icons/${iconStr}-uhd.plist`);
-    if (plistRes.ok) {
+    const baseColor = toHex(col1);
+    const secColor = toHex(col2);
+
+    for (let partIndex = 0; partIndex < idleFrame.length; partIndex++){
+      const partData = idleFrame[partIndex];
+      const partName = padZero(partData.part || (partIndex + 1));
+      const partIconStr = `${iconStr}_${partName}`;
+
+      const plistRes = await fetch(`https://gdbrowser.com/iconkit/icons/${partIconStr}-uhd.plist`);
+      if (!plistRes.ok) continue;
+      
       const framePos = parsePlist(await plistRes.text());
-      const texture = await PIXI.Assets.load(`https://gdbrowser.com/iconkit/icons/${iconStr}-uhd.png`);
+      const texture = await PIXI.Assets.load(`https://gdbrowser.com/iconkit/icons/${partIconStr}-uhd.png`);
 
-      const baseColor = toHex(col1);
-      const secColor = toHex(col2);
+      const tintOverride = info.tints ? info.tints[partIndex] : null;
+      let pColor = baseColor;
+      let sColor = secColor;
+      if (tintOverride === 1) sColor = baseColor;
+      if (tintOverride === 2) pColor = secColor;
 
-      // Iterate over each limb/part defined in the idle frame
-      for (let partIndex = 0; partIndex < idleFrame.length; partIndex++){
-        const partData = idleFrame[partIndex];
-        const partNum = padZero(partData.part || (partIndex + 1));
+      [
+        { suffix: "_glow_001.png", color: glowOn ? sColor : null },
+        { suffix: "_2_001.png", color: sColor },
+        { suffix: "_001.png", color: pColor },
+        { suffix: "_extra_001.png", color: WHITE }
+      ].forEach(layer => {
+        if (layer.color === null) return;
+        const frameName = partIconStr + layer.suffix;
+        const bounds = framePos[frameName];
+        if (!bounds) return;
+
+        const sprite = makePartSprite(texture, bounds, layer.color);
         
-        // Determine part specific color overrides if defined in animations info
-        const tintOverride = info.tints ? info.tints[partIndex] : null;
-        let pColor = baseColor;
-        let sColor = secColor;
-        if (tintOverride === 1) sColor = baseColor;
-        if (tintOverride === 2) pColor = secColor;
+        // Correct original part placement & transformation
+        sprite.x += partData.pos[0];
+        sprite.y -= partData.pos[1];
+        sprite.scale.x = partData.scale[0] * (partData.flipped[0] ? -1 : 1);
+        sprite.scale.y = partData.scale[1] * (partData.flipped[1] ? -1 : 1);
+        sprite.angle = partData.rotation;
 
-        const partContainer = new PIXI.Container();
-
-        [
-          { suffix: `_${partNum}_glow_001.png`, color: glowOn ? sColor : null },
-          { suffix: `_${partNum}_2_001.png`, color: sColor },
-          { suffix: `_${partNum}_001.png`, color: pColor },
-          { suffix: `_${partNum}_extra_001.png`, color: WHITE }
-        ].forEach(layer => {
-          if (layer.color === null) return;
-          const frameName = `${iconStr}${layer.suffix}`;
-          const bounds = framePos[frameName];
-          if (!bounds) return;
-          partContainer.addChild(makePartSprite(texture, bounds, layer.color));
-        });
-
-        // Apply part transformations (position, rotation, scale, flip)
-        partContainer.x = partData.pos[0];
-        partContainer.y = -partData.pos[1];
-        partContainer.scale.x = partData.scale[0] * (partData.flipped[0] ? -1 : 1);
-        partContainer.scale.y = partData.scale[1] * (partData.flipped[1] ? -1 : 1);
-        partContainer.angle = partData.rotation;
-
-        container.addChild(partContainer);
-      }
+        container.addChild(sprite);
+      });
     }
   } else {
     // Simple single-layer forms
@@ -153,7 +150,8 @@ async function main(){
     });
   }
 
-  container.x = 75; container.y = 75;
+  container.x = 75; 
+  container.y = 75;
   container.angle = -90;
   app.stage.addChild(container);
 }
