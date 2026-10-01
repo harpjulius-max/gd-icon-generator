@@ -77,15 +77,19 @@ function parsePlist(xmlText){
   return pos;
 }
 
-function makePartSprite(texture, bounds, tint){
+function makePartSprite(texture, bounds, tint, useAnchor = true){
   const rect = new PIXI.Rectangle(bounds.pos[0], bounds.pos[1], bounds.size[0], bounds.size[1]);
   const partTexture = new PIXI.Texture({ source: texture.source, frame: rect });
   const sprite = new PIXI.Sprite(partTexture);
   sprite.tint = tint;
-  sprite.anchor.set(0.5);
-  // Keep original texture offsets strictly relative to sprite center
-  sprite.x = bounds.spriteOffset ? bounds.spriteOffset[0] : 0;
-  sprite.y = bounds.spriteOffset ? -bounds.spriteOffset[1] : 0;
+  if (useAnchor) {
+    sprite.anchor.set(0.5);
+    sprite.x = bounds.spriteOffset ? bounds.spriteOffset[0] : 0;
+    sprite.y = bounds.spriteOffset ? -bounds.spriteOffset[1] : 0;
+  } else {
+    sprite.x = bounds.spriteOffset ? bounds.spriteOffset[0] : 0;
+    sprite.y = bounds.spriteOffset ? -bounds.spriteOffset[1] : 0;
+  }
   return sprite;
 }
 
@@ -99,7 +103,6 @@ async function main(){
 
   const wrap = document.getElementById("iconWrap");
 
-  // Fetch color database from IconKit API
   const apiRes = await fetch("https://gdbrowser.com/api/iconkit");
   const apiData = await apiRes.json();
   const colors = apiData.colors;
@@ -122,7 +125,6 @@ async function main(){
   const container = new PIXI.Container();
 
   if (COMPLEX_FORMS.includes(type)) {
-    // Load unified plist and sheet for Robot/Spider
     const plistRes = await fetch(`https://gdbrowser.com/iconkit/icons/${iconStr}-uhd.plist`);
     const framePos = parsePlist(await plistRes.text());
     const texture = await PIXI.Assets.load(`https://gdbrowser.com/iconkit/icons/${iconStr}-uhd.png`);
@@ -135,7 +137,6 @@ async function main(){
       const partData = idleFrame[partIndex];
       const partNum = padZero(partData.part || (partIndex + 1));
 
-      // Resolve color tint overrides from animation info
       const tintOverride = info.tints ? info.tints[partIndex] : null;
       let pColor = baseColor;
       let sColor = secColor;
@@ -154,15 +155,15 @@ async function main(){
         const frameName = `${iconStr}${layer.suffix}`;
         const bounds = framePos[frameName];
         if (!bounds) return;
-        partContainer.addChild(makePartSprite(texture, bounds, layer.color));
+        partContainer.addChild(makePartSprite(texture, bounds, layer.color, true));
       });
 
-      // Apply keyframe placement transforms
+      // Align relative to parent container coordinates
       partContainer.x = partData.pos[0];
       partContainer.y = -partData.pos[1];
       partContainer.scale.x = partData.scale[0] * (partData.flipped[0] ? -1 : 1);
       partContainer.scale.y = partData.scale[1] * (partData.flipped[1] ? -1 : 1);
-      partContainer.angle = partData.rotation;
+      partContainer.angle = -partData.rotation;
 
       container.addChild(partContainer);
     }
@@ -182,14 +183,13 @@ async function main(){
       const frameName = iconStr + layer.suffix;
       const bounds = framePos[frameName];
       if (!bounds) return;
-      container.addChild(makePartSprite(texture, bounds, layer.color));
+      container.addChild(makePartSprite(texture, bounds, layer.color, true));
     });
   }
 
-  // Center container and align rotation upright
   container.x = 75; 
   container.y = 75;
-  container.angle = 0; // Fixed 90-degree offset across all icons
+  container.angle = 0;
   app.stage.addChild(container);
 }
 
