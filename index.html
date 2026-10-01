@@ -17,7 +17,9 @@
 const WHITE = 0xffffff;
 const formMap = { cube:"player", ball:"player_ball", ufo:"bird", wave:"dart", ship:"ship", swing:"swing", jetpack:"jetpack", robot:"robot", spider:"spider" };
 const COMPLEX_FORMS = ["robot", "spider"];
-const SHEET_SCALE = 4;   // -uhd sheets are 4x the animation data's units
+const SHEET_SCALE = 2;   // robot/spider part spacing (was 4; try 3 for a subtler cut)
+const SIMPLE_ANGLE = 0;  // rotation for every non-robot/spider form (was -90, now flipped 90 clockwise)
+const UFO_COLOR_EXTRA = 90; // extra rotation for the UFO's colored layers only (use -90 if it spins the wrong way)
 const ROTATE_MODE = 2;   // Pixi groupD8 rotation for rotated frames; try 6 if parts look turned the wrong way
 const ROT_SIGN = 1;      // set to -1 if limbs bend the wrong direction
 const BASE = "https://gdbrowser.com/iconkit/icons/";
@@ -173,20 +175,26 @@ async function main(){
     container.addChild(glowLayer, bodyLayer);
   } else {
     // Simple single-layer forms
+    const isUfo = form === "bird";
+    const colorGroup = new PIXI.Container(); // tinted layers; rotated extra for UFO
+    if (isUfo) colorGroup.angle = UFO_COLOR_EXTRA;
+ 
     [
-      { suffix: "_glow_001.png", color: glowOn ? toHex(col2) : null },
-      { suffix: "_2_001.png", color: toHex(col2) },
-      { suffix: "_001.png", color: toHex(col1) }
+      { suffix: "_glow_001.png", color: glowOn ? toHex(col2) : null, colored: false },
+      { suffix: "_2_001.png", color: toHex(col2), colored: true },
+      { suffix: "_001.png", color: toHex(col1), colored: true }
     ].forEach(layer => {
       if (layer.color === null) return;
       const bounds = framePos[iconStr + layer.suffix];
       if (!bounds) return;
-      container.addChild(makePartSprite(texture, bounds, layer.color));
+      const sprite = makePartSprite(texture, bounds, layer.color);
+      (layer.colored ? colorGroup : container).addChild(sprite);
     });
+    container.addChild(colorGroup);
   }
  
   container.x = 75; container.y = 75;
-  container.angle = COMPLEX_FORMS.includes(form) ? 0 : -90;
+  container.angle = COMPLEX_FORMS.includes(form) ? 0 : SIMPLE_ANGLE;
   app.stage.addChild(container);
 }
  
