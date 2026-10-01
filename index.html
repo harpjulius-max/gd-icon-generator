@@ -15,7 +15,6 @@
 <script>
 const WHITE = 0xffffff;
 const formMap = { cube:"player", ball:"player_ball", ufo:"bird", wave:"dart", ship:"ship", swing:"swing", jetpack:"jetpack" };
-const PROXY = "https://corsproxy.io/?url=";
 
 function padZero(num){ num = +num; return num < 10 ? "0"+num : ""+num; }
 
@@ -65,7 +64,7 @@ async function main(){
   const form = formMap[type.toLowerCase()] || type.toLowerCase();
   const iconStr = `${form}_${padZero(id)}`;
 
-  const plistRes = await fetch(PROXY + encodeURIComponent(`https://gdbrowser.com/iconkit/icons/${iconStr}-uhd.plist`));
+  const plistRes = await fetch(`https://gdbrowser.com/iconkit/icons/${iconStr}-uhd.plist`);
   const plistText = await plistRes.text();
   const framePos = parsePlist(plistText);
 
@@ -73,7 +72,7 @@ async function main(){
   await app.init({ width:150, height:150, backgroundAlpha:0 });
   document.getElementById("iconWrap").appendChild(app.canvas);
 
-  const texture = await PIXI.Assets.load(PROXY + encodeURIComponent(`https://gdbrowser.com/iconkit/icons/${iconStr}-uhd.png`));
+  const texture = await PIXI.Assets.load(`https://gdbrowser.com/iconkit/icons/${iconStr}-uhd.png`);
 
   const layerKeys = [
     { suffix: "_glow_001.png", color: glowOn ? toHex(col2) : null },
