@@ -56,9 +56,9 @@ const COMPLEX_FORMS = ["robot", "spider"];
 const VEHICLE_FORMS = ["ship", "bird", "jetpack"];
 
 const cubeOffsets = {
-  ship: { x: 0, y: 20, scale: 0.55 },
-  bird: { x: 0, y: 24, scale: 0.55 },
-  jetpack: { x: 12, y: 8, scale: 0.60 }
+  ship: { x: 0, y: 12, scale: 0.55 },
+  bird: { x: 0, y: 16, scale: 0.55 },
+  jetpack: { x: 8, y: 4, scale: 0.60 }
 };
 
 function padZero(num){ num = +num; return num < 10 ? "0" + num : "" + num; }
@@ -98,6 +98,7 @@ function parsePlist(xmlText){
   return pos;
 }
 
+// Preserve black outlines by tinting only light/white pixels using pixel lightness
 function getTintedFrameCanvas(atlasImg, bounds, colorHex){
   const [rx, ry] = bounds.pos;
   const [atlasW, atlasH] = bounds.size;
@@ -130,10 +131,13 @@ function getTintedFrameCanvas(atlasImg, bounds, colorHex){
   const data = imgData.data;
 
   for (let i = 0; i < data.length; i += 4) {
-    if (data[i + 3] > 0) {
-      data[i]     = (data[i]     * tr) / 255;
-      data[i + 1] = (data[i + 1] * tg) / 255;
-      data[i + 2] = (data[i + 2] * tb) / 255;
+    const a = data[i + 3];
+    if (a > 0) {
+      // Calculate pixel brightness to preserve dark outlines
+      const lightness = (data[i] + data[i + 1] + data[i + 2]) / (3 * 255);
+      data[i]     = Math.round(tr * lightness);
+      data[i + 1] = Math.round(tg * lightness);
+      data[i + 2] = Math.round(tb * lightness);
     }
   }
 
@@ -224,14 +228,15 @@ async function main(){
       .map((part, originalIdx) => ({ ...part, originalIdx }))
       .sort((a, b) => (a.z ?? 0) - (b.z ?? 0));
 
-    // Pass 1: Glow Layers (Underneath)
+    // Pass 1: Glow Layers (Behind body)
     if (glowOn) {
       sortedParts.forEach(partData => {
         const partNum = padZero(partData.part || (partData.originalIdx + 1));
         const frameName = `${iconStr}_${partNum}_glow_001.png`;
 
         ctx.save();
-        ctx.translate(partData.pos[0] * 4, -partData.pos[1] * 4);
+        // Scale positions by 2 to align UHD sprite coordinate origins
+        ctx.translate(partData.pos[0] * 2, -partData.pos[1] * 2);
         ctx.rotate((partData.rotation * Math.PI) / 180);
         const flipX = partData.flipped && partData.flipped[0] ? -1 : 1;
         const flipY = partData.flipped && partData.flipped[1] ? -1 : 1;
@@ -242,12 +247,11 @@ async function main(){
       });
     }
 
-    // Pass 2: Base & Secondary Layer Placement
+    // Pass 2: Base & Secondary Parts
     sortedParts.forEach(partData => {
       const partNum = padZero(partData.part || (partData.originalIdx + 1));
       const tintOverride = info.tints ? info.tints[partData.originalIdx] : null;
 
-      // Handle GD Tint Logic
       let primaryColor = baseColor;
       let secondaryColor = secColor;
       if (tintOverride === 1) {
@@ -258,19 +262,17 @@ async function main(){
       }
 
       ctx.save();
-      ctx.translate(partData.pos[0] * 4, -partData.pos[1] * 4);
+      ctx.translate(partData.pos[0] * 2, -partData.pos[1] * 2);
       ctx.rotate((partData.rotation * Math.PI) / 180);
       const flipX = partData.flipped && partData.flipped[0] ? -1 : 1;
       const flipY = partData.flipped && partData.flipped[1] ? -1 : 1;
       ctx.scale((partData.scale ? partData.scale[0] : 1) * flipX, (partData.scale ? partData.scale[1] : 1) * flipY);
 
-      // Layer 1: Primary Body Layer (_001.png) -> Base Color
+      // 1. Primary layer (_001) has the main body color + black outline
       drawLayerFrame(ctx, `${iconStr}_${partNum}_001.png`, framePos, atlasImg, primaryColor);
-
-      // Layer 2: Secondary Accent Layer (_2_001.png) -> Secondary Color
+      // 2. Secondary accent layer (_2_001) overlays top accents
       drawLayerFrame(ctx, `${iconStr}_${partNum}_2_001.png`, framePos, atlasImg, secondaryColor);
-
-      // Layer 3: Extra Detail Layer (_extra_001.png) -> Untinted White
+      // 3. Extra detail layer (_extra_001) overlays eyes/white parts
       drawLayerFrame(ctx, `${iconStr}_${partNum}_extra_001.png`, framePos, atlasImg, WHITE);
 
       ctx.restore();
@@ -280,10 +282,10 @@ async function main(){
     // --- SIMPLE FORMS & VEHICLES ---
     const vehicleOffset = cubeOffsets[form];
 
-    // Pass 1: Glow
+    // Glow Layer
     drawLayerFrame(ctx, `${iconStr}_glow_001.png`, framePos, atlasImg, glowOn ? secColor : null);
 
-    // Pass 2: Drivers / Inner Cubes
+    // Inner Driver Cube
     if (showCube && VEHICLE_FORMS.includes(form) && vehicleOffset) {
       try {
         const secCubeStr = `player_${padZero(cubeId)}`;
@@ -304,7 +306,7 @@ async function main(){
       }
     }
 
-    // Pass 3: Standard Layer Order (Primary -> Secondary Accent -> White Details)
+    // Main Sprite
     drawLayerFrame(ctx, `${iconStr}_001.png`, framePos, atlasImg, baseColor);
     drawLayerFrame(ctx, `${iconStr}_2_001.png`, framePos, atlasImg, secColor);
     drawLayerFrame(ctx, `${iconStr}_extra_001.png`, framePos, atlasImg, WHITE);
