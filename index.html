@@ -4,16 +4,36 @@
 <meta charset="UTF-8">
 <title>GD Icon Render</title>
 <style>
-  html, body { margin:0; padding:0; width:300px; height:300px; background:#000; display:flex; align-items:center; justify-content:center; overflow:hidden; }
-  #iconWrap { animation: bob 1.6s ease-in-out infinite; }
-  @keyframes bob { 0%{transform:translateY(0px);} 50%{transform:translateY(-15px);} 100%{transform:translateY(0px);} }
+  html, body { 
+    margin: 0; 
+    padding: 0; 
+    width: 300px; 
+    height: 300px; 
+    background: #000; 
+    display: flex; 
+    align-items: center; 
+    justify-content: center; 
+    overflow: hidden; 
+  }
+  #icon { 
+    width: 150px;
+    height: 150px;
+    object-fit: contain;
+    animation: bob 1.6s ease-in-out infinite; 
+  }
+  @keyframes bob { 
+    0% { transform: translateY(0px); } 
+    50% { transform: translateY(-15px); } 
+    100% { transform: translateY(0px); } 
+  }
 </style>
 </head>
 <body>
-<div id="iconWrap"></div>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/8.0.0/pixi.min.js"></script>
+
+<img id="icon" alt="GD Icon" />
+
 <script>
-async function main(){
+function main(){
   const params = new URLSearchParams(window.location.search);
   const type = params.get("form") || "cube";
   const id = params.get("icon") || "1";
@@ -21,25 +41,11 @@ async function main(){
   const col2 = params.get("col2") || "0";
   const glowOn = params.get("glow") === "true";
 
-  // Create the PIXI Application
-  const app = new PIXI.Application();
-  await app.init({ width:150, height:150, backgroundAlpha:0 });
-  document.getElementById("iconWrap").appendChild(app.canvas);
-
-  // Dynamically request GDBrowser's rendered icon image
+  // Build the GDBrowser direct image URL
   const gdbrowserUrl = `https://gdbrowser.com/icon/icon?form=${type}&icon=${id}&col1=${col1}&col2=${col2}&glow=${glowOn}`;
 
-  try {
-    const texture = await PIXI.Assets.load(gdbrowserUrl);
-    const sprite = new PIXI.Sprite(texture);
-    sprite.anchor.set(0.5);
-    sprite.x = 75;
-    sprite.y = 75;
-    
-    app.stage.addChild(sprite);
-  } catch (err) {
-    console.error("Failed to load icon image:", err);
-  }
+  // Set the image src directly
+  document.getElementById("icon").src = gdbrowserUrl;
 }
 
 main();
