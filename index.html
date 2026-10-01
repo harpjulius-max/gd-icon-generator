@@ -81,21 +81,22 @@ async function main(){
 
   const container = new PIXI.Container();
 
-  if (COMPLEX_FORMS.includes(form)){
+  if (COMPLEX_FORMS.includes(form)) {
     const robotData = apiData.robotAnimations;
     const animSet = robotData.animations[form];
     const animName = animSet.idle ? "idle" : "run";
     const poseFrame = animSet[animName].frames[0];
-  
-    for (const partData of poseFrame){
-      const partNum = partData.part;
+
+    for (const partData of poseFrame) {
+      const partNum = padZero(partData.part || partData.p);
       const partIconStr = `${iconStr}_${partNum}`;
-  
+
       const plistRes = await fetch(`https://gdbrowser.com/iconkit/icons/${partIconStr}-uhd.plist`);
       if (!plistRes.ok) continue;
+
       const framePos = parsePlist(await plistRes.text());
       const texture = await PIXI.Assets.load(`https://gdbrowser.com/iconkit/icons/${partIconStr}-uhd.png`);
-  
+
       [
         { suffix: "_001.png", color: toHex(col1) },
         { suffix: "_2_001.png", color: toHex(col2) }
@@ -103,6 +104,7 @@ async function main(){
         const frameName = partIconStr + layer.suffix;
         const bounds = framePos[frameName];
         if (!bounds) return;
+
         const sprite = makePartSprite(texture, bounds, layer.color);
         sprite.x += partData.pos[0];
         sprite.y -= partData.pos[1];
