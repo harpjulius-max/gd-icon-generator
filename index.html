@@ -82,7 +82,6 @@ function parsePlist(xmlText){
   return pos;
 }
 
-// Crops sprite frame and applies multiplicative tinting to preserve black outlines
 function getTintedFrameCanvas(atlasImg, bounds, colorHex){
   const [rx, ry] = bounds.pos;
   const isRotated = bounds.rotated;
@@ -115,7 +114,6 @@ function getTintedFrameCanvas(atlasImg, bounds, colorHex){
   tinted.height = destH;
   const tCtx = tinted.getContext("2d");
 
-  // Multiplicative blending preserves black outlines while tinting white regions
   tCtx.fillStyle = colorHex;
   tCtx.fillRect(0, 0, destW, destH);
 
@@ -177,18 +175,33 @@ async function main(){
     atlasImg.onerror = reject;
   });
 
-  // Upright canvas origin at center
   ctx.save();
   ctx.translate(150, 150);
 
   if (COMPLEX_FORMS.includes(type) && robotData && robotData.animations[type]) {
-    const info = robotData.info[type];
-    const idleFrame = robotData.animations[type].idle.frames[0];
+    const info = robotData.info[type] || {};
+    const idleFrame = robotData.animations[type].idle.frames;
 
-    for (let partIndex = 0; partIndex < idleFrame.length; partIndex++){
+    // Extract parent joint relationships to build a node tree
+    const parentList = info.parents || idleFrame.map(p => (p.parent !== undefined ? p.parent : -1));
+    const childrenMap = {};
+    const rootIndices = [];
+
+    parentList.forEach((pIdx, i) => {
+      if (pIdx === -1 || pIdx === null || pIdx === undefined || pIdx === i) {
+        rootIndices.push(i);
+      } else {
+        if (!childrenMap[pIdx]) childrenMap[pIdx] = [];
+        childrenMap[pIdx].push(i);
+      }
+    });
+
+    // Recursive node rendering (inherits joint transforms down the limb tree)
+    function drawNode(partIndex) {
       const partData = idleFrame[partIndex];
-      const partNum = padZero(partData.part || (partIndex + 1));
+      if (!partData) return;
 
+      const partNum = padZero(partData.part || (partIndex + 1));
       const tintOverride = info.tints ? info.tints[partIndex] : null;
       let pColor = baseColor;
       let sColor = secColor;
@@ -201,7 +214,7 @@ async function main(){
       
       const flipX = partData.flipped && partData.flipped[0] ? -1 : 1;
       const flipY = partData.flipped && partData.flipped[1] ? -1 : 1;
-      ctx.scale(partData.scale[0] * flipX, partData.scale[1] * flipY);
+      ctx.scale((partData.scale ? partData.scale[0] : 1) * flipX, (partData.scale ? partData.scale[1] : 1) * flipY);
 
       const layers = [
         { suffix: `_${partNum}_glow_001.png`, color: glowOn ? sColor : null },
@@ -219,12 +232,18 @@ async function main(){
         const frameCanvas = getTintedFrameCanvas(atlasImg, bounds, layer.color);
         const ox = bounds.spriteOffset ? bounds.spriteOffset[0] : 0;
         const oy = bounds.spriteOffset ? -bounds.spriteOffset[1] : 0;
-
         ctx.drawImage(frameCanvas, ox - bounds.size[0] / 2, oy - bounds.size[1] / 2);
       });
 
+      // Render attached child joints
+      const children = childrenMap[partIndex] || [];
+      children.forEach(childIdx => drawNode(childIdx));
+
       ctx.restore();
     }
+
+    rootIndices.forEach(rootIdx => drawNode(rootIdx));
+
   } else {
     // Simple forms (Cube, Ship, Ball, UFO, Wave, Swing, Jetpack)
     const layers = [
