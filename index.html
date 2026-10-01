@@ -17,21 +17,21 @@
 const WHITE = 0xffffff;
 const formMap = { cube:"player", ball:"player_ball", ufo:"bird", wave:"dart", ship:"ship", swing:"swing", jetpack:"jetpack", robot:"robot", spider:"spider" };
 const COMPLEX_FORMS = ["robot", "spider"];
-// Every tuning value can be overridden from the URL, e.g. &scale=3&rotsign=-1 (no commit needed)
+const BASE = "https://gdbrowser.com/iconkit/icons/";
+
+// Tuning values, overridable from the URL (e.g. &scale=3&rotmode=6&dome=1)
 const Q = new URLSearchParams(window.location.search);
 const num = (k, d) => Q.has(k) ? parseFloat(Q.get(k)) : d;
-const SHEET_SCALE = num("scale", 4);        // robot/spider part spacing
-const SIMPLE_ANGLE = num("angle", 0);       // all non-robot/spider forms (colored layers)
-const UFO_BASE_ANGLE = num("ufobase", -90); // UFO's regular (glow) layer stays where it was
-const UFO_COLOR_EXTRA = num("ufocolor", 90);// UFO colored layers: base + this = net SIMPLE_ANGLE
-const ROTATE_MODE = num("rotmode", 2);      // Pixi groupD8 for rotated frames; try 6
-const ROT_SIGN = num("rotsign", 1);         // -1 if limbs bend the wrong way
-const BASE = "https://gdbrowser.com/iconkit/icons/";
- 
+const SHEET_SCALE = num("scale", 4);   // robot/spider part spacing
+const ROTATE_MODE = num("rotmode", 2); // how rotated sheet frames are un-rotated; try 6
+const ROT_SIGN    = num("rotsign", 1); // -1 if robot/spider limbs bend the wrong way
+const ANGLE       = num("angle", 0);   // whole-icon rotation (should stay 0 now)
+const SHOW_DOME   = Q.get("dome") === "1"; // draw the _3_001 layer (ship/ufo glass)
+
 // ---------- helpers ----------
 function padZero(num){ num = +num; return num < 10 ? "0"+num : ""+num; }
 function parseWeirdArray(data){ return data.replace(/[^0-9,-.]/g,"").split(",").map(x=>+x); }
- 
+
 function parsePlist(xmlText){
   let dom = new DOMParser().parseFromString(xmlText, "text/xml");
   let frames = dom.children[0].children[0].children[1].children;
@@ -53,26 +53,15 @@ function parsePlist(xmlText){
       }
     }
     pos[name].rotated = rotated;
-    pos[name].dispSize = [...pos[name].size];  // unswapped (on-screen) size
-    if (rotated) pos[name].size.reverse();     // on-sheet size
+    pos[name].dispSize = [...pos[name].size]; // upright (on-screen) size
+    if (rotated) pos[name].size.reverse();    // size of the region as stored on the sheet
   }
   return pos;
 }
- 
-// Simple forms (cube, ball, ufo, wave, ship, swing, jetpack)
-function makePartSprite(texture, bounds, tint){
-  const rect = new PIXI.Rectangle(bounds.pos[0], bounds.pos[1], bounds.size[0], bounds.size[1]);
-  const partTexture = new PIXI.Texture({ source: texture.source, frame: rect });
-  const sprite = new PIXI.Sprite(partTexture);
-  sprite.tint = tint;
-  sprite.anchor.set(0.5);
-  sprite.x = (bounds.spriteOffset ? bounds.spriteOffset[0] : 0);
-  sprite.y = -(bounds.spriteOffset ? bounds.spriteOffset[1] : 0);
-  return sprite;
-}
- 
-// Robot / spider parts (handles per-frame rotation properly)
-function makeComplexSprite(texture, b, tint){
+
+// One sprite for any frame. Each frame's own textureRotated flag decides
+// whether it needs un-rotating, so no per-icon angle hacks are needed.
+function makeSprite(texture, b, tint){
   const frame = new PIXI.Rectangle(b.pos[0], b.pos[1], b.size[0], b.size[1]);
   const orig  = new PIXI.Rectangle(0, 0, b.dispSize[0], b.dispSize[1]);
   const tex = new PIXI.Texture({ source: texture.source, frame, orig, rotate: b.rotated ? ROTATE_MODE : 0 });
@@ -83,8 +72,8 @@ function makeComplexSprite(texture, b, tint){
   s.y = -(b.spriteOffset ? b.spriteOffset[1] : 0);
   return s;
 }
- 
-// Which sheet image (01-04) a named part uses. Guess: swap 2/3 if limbs look wrong.
+
+// Which sheet image (01-04) a named robot/spider part uses.
 function partFileNum(name){
   const n = (name || "").toLowerCase();
   if (n.includes("head")) return 1;
@@ -93,23 +82,22 @@ function partFileNum(name){
   if (n.includes("foot")) return 4;
   return 1;
 }
- 
+
 // Darken a color (amt 0-255) for back parts
 function shade(color, amt){
   const k = amt / 255;
   const r = ((color >> 16) & 255) * k, g = ((color >> 8) & 255) * k, b = (color & 255) * k;
   return (Math.round(r) << 16) + (Math.round(g) << 8) + Math.round(b);
 }
- 
+
 // ---------- main ----------
 async function main(){
-  const params = new URLSearchParams(window.location.search);
-  const type = params.get("form") || "cube";
-  const id = parseInt(params.get("icon"));
-  const col1 = parseInt(params.get("col1"));
-  const col2 = parseInt(params.get("col2"));
-  const glowOn = params.get("glow") === "true";
- 
+  const type = Q.get("form") || "cube";
+  const id = parseInt(Q.get("icon"));
+  const col1 = parseInt(Q.get("col1"));
+  const col2 = parseInt(Q.get("col2"));
+  const glowOn = Q.get("glow") === "true";
+
   const apiRes = await fetch("https://gdbrowser.com/api/iconkit");
   const apiData = await apiRes.json();
   const colors = apiData.colors;
@@ -117,37 +105,51 @@ async function main(){
     let c = colors[colID];
     return c ? (c.r<<16)+(c.g<<8)+c.b : WHITE;
   }
- 
+
   const form = formMap[type.toLowerCase()] || type.toLowerCase();
   const iconStr = `${form}_${padZero(id)}`;
- 
+
   const app = new PIXI.Application();
   await app.init({ width:150, height:150, backgroundAlpha:0 });
   document.getElementById("iconWrap").appendChild(app.canvas);
- 
+
   const container = new PIXI.Container();
- 
-  // One plist + one texture per icon, for every form
+
   const plistRes = await fetch(`${BASE}${iconStr}-uhd.plist`);
   const framePos = parsePlist(await plistRes.text());
   const texture = await PIXI.Assets.load(`${BASE}${iconStr}-uhd.png`);
- 
+  console.log("frames:", Object.entries(framePos).map(([k,v]) => k + (v.rotated ? " (rotated)" : "")).join(", "));
+
+  // Layers for one part, back to front. Glow is returned separately.
+  function layersFor(base, tintAmt){
+    const out = { glow: [], body: [] };
+    const add = (list, suffix, color) => {
+      const b = framePos[base + suffix];
+      if (b && color !== null) list.push(makeSprite(texture, b, color));
+    };
+    add(out.glow, "_glow_001.png", glowOn ? toHex(col2) : null);
+    add(out.body, "_3_001.png",     SHOW_DOME ? WHITE : null);
+    add(out.body, "_2_001.png",     shade(toHex(col2), tintAmt));
+    add(out.body, "_001.png",       shade(toHex(col1), tintAmt));
+    add(out.body, "_extra_001.png", WHITE); // eyes / small details, never tinted
+    return out;
+  }
+
+  const glowLayer = new PIXI.Container();
+  const bodyLayer = new PIXI.Container();
+
   if (COMPLEX_FORMS.includes(form)){
     const robotData = apiData.robotAnimations;
     const info = robotData.info[form];
     const animSet = robotData.animations[form];
     const poseFrame = animSet[animSet.idle ? "idle" : "run"].frames[0];
     console.log("first part data:", JSON.stringify(poseFrame[0]), "count:", poseFrame.length);
-    console.log("frame names:", Object.keys(framePos).join(", "));
- 
-    const glowLayer = new PIXI.Container();
-    const bodyLayer = new PIXI.Container();
- 
+
     poseFrame.forEach((partData, i) => {
-      const num = padZero(partFileNum(info.names[i]));
-      const base = `${iconStr}_${num}`;
+      const base = `${iconStr}_${padZero(partFileNum(info.names[i]))}`;
       const tintAmt = info.tints && info.tints[i] ? info.tints[i] : 255;
- 
+      const layers = layersFor(base, tintAmt);
+
       const place = () => {
         const c = new PIXI.Container();
         c.x = partData.pos[0] * SHEET_SCALE;
@@ -157,54 +159,25 @@ async function main(){
         c.angle = ROT_SIGN * partData.rotation;
         return c;
       };
-      const glowPart = place();
-      const bodyPart = place();
- 
-      const layers = [
-        { suffix: "_glow_001.png", color: glowOn ? toHex(col2) : null, target: glowPart },
-        { suffix: "_2_001.png",    color: shade(toHex(col2), tintAmt),  target: bodyPart },
-        { suffix: "_001.png",      color: shade(toHex(col1), tintAmt),  target: bodyPart }
-      ];
-      layers.forEach(l => {
-        if (l.color === null) return;
-        const b = framePos[base + l.suffix];
-        if (!b) return;
-        l.target.addChild(makeComplexSprite(texture, b, l.color));
-      });
- 
-      glowLayer.addChild(glowPart);
-      bodyLayer.addChild(bodyPart);
+      const g = place(), b = place();
+      layers.glow.forEach(s => g.addChild(s));
+      layers.body.forEach(s => b.addChild(s));
+      glowLayer.addChild(g);
+      bodyLayer.addChild(b);
     });
- 
-    container.addChild(glowLayer, bodyLayer);
   } else {
-    // Simple single-layer forms
-    const isUfo = form === "bird";
-    const colorGroup = new PIXI.Container(); // tinted layers; rotated extra for UFO
-    if (isUfo) colorGroup.angle = UFO_COLOR_EXTRA;
- 
-    [
-      { suffix: "_glow_001.png", color: glowOn ? toHex(col2) : null, colored: false },
-      { suffix: "_2_001.png", color: toHex(col2), colored: true },
-      { suffix: "_001.png", color: toHex(col1), colored: true }
-    ].forEach(layer => {
-      if (layer.color === null) return;
-      const bounds = framePos[iconStr + layer.suffix];
-      if (!bounds) return;
-      const sprite = makePartSprite(texture, bounds, layer.color);
-      (layer.colored ? colorGroup : container).addChild(sprite);
-    });
-    container.addChild(colorGroup);
+    const layers = layersFor(iconStr, 255);
+    layers.glow.forEach(s => glowLayer.addChild(s));
+    layers.body.forEach(s => bodyLayer.addChild(s));
   }
- 
+
+  container.addChild(glowLayer, bodyLayer);
   container.x = 75; container.y = 75;
-  container.angle = COMPLEX_FORMS.includes(form) ? 0 : (form === "bird" ? UFO_BASE_ANGLE : SIMPLE_ANGLE);
-  console.log("settings:", { SHEET_SCALE, SIMPLE_ANGLE, UFO_BASE_ANGLE, UFO_COLOR_EXTRA, ROTATE_MODE, ROT_SIGN });
+  container.angle = ANGLE;
   app.stage.addChild(container);
 }
- 
+
 main();
 </script>
 </body>
 </html>
- 
