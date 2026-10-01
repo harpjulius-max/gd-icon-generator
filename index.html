@@ -1,78 +1,161 @@
-HTML
 <!DOCTYPE html>
 <html>
 <head>
 <meta charset="UTF-8">
 <title>GD Icon Render</title>
 <style>
-  html, body { 
-    margin: 0; 
-    padding: 0; 
-    width: 300px; 
-    height: 300px; 
-    background: #000; 
-    display: flex; 
-    align-items: center; 
-    justify-content: center; 
-    overflow: hidden; 
-  }
-  #iconWrap { 
-    width: 150px;
-    height: 150px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    animation: bob 1.6s ease-in-out infinite; 
-  }
-  #icon {
-    width: 100%;
-    height: 100%;
-    object-fit: contain;
-    display: block;
-  }
-  @keyframes bob { 
-    0% { transform: translateY(0px); } 
-    50% { transform: translateY(-15px); } 
-    100% { transform: translateY(0px); } 
-  }
+  html, body { margin:0; padding:0; width:300px; height:300px; background:#000; display:flex; align-items:center; justify-content:center; overflow:hidden; }
+  #iconWrap { animation: bob 1.6s ease-in-out infinite; }
+  @keyframes bob { 0%{transform:translateY(0px);} 50%{transform:translateY(-15px);} 100%{transform:translateY(0px);} }
 </style>
 </head>
 <body>
-
-<div id="iconWrap">
-  <img id="icon" alt="GD Icon" />
-</div>
-
+<div id="iconWrap"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/8.0.0/pixi.min.js"></script>
 <script>
-async function main() {
+const WHITE = 0xffffff;
+const formMap = { cube:"player", ball:"player_ball", ufo:"bird", wave:"dart", ship:"ship", swing:"swing", jetpack:"jetpack", robot:"robot", spider:"spider" };
+const COMPLEX_FORMS = ["robot", "spider"];
+
+function padZero(num){ num = +num; return num < 10 ? "0"+num : ""+num; }
+function parseWeirdArray(data){ return data.replace(/[^0-9,-.]/g,"").split(",").map(x=>+x); }
+
+function parsePlist(xmlText){
+  let dom = new DOMParser().parseFromString(xmlText, "text/xml");
+  let frames = dom.children[0].children[0].children[1].children;
+  let pos = {};
+  for (let i=0;i<frames.length;i+=2){
+    let name = frames[i].innerHTML;
+    let data = frames[i+1].children;
+    let rotated = false;
+    pos[name] = {};
+    for (let n=0;n<data.length;n+=2){
+      let key = data[n].innerHTML;
+      let val = data[n+1].innerHTML;
+      if (key === "spriteOffset") pos[name].spriteOffset = parseWeirdArray(val);
+      if (key === "textureRotated") rotated = data[n+1].outerHTML.includes("true");
+      if (key === "textureRect"){
+        let arr = val.slice(1,-1).split("},{").map(x=>parseWeirdArray(x));
+        pos[name].pos = arr[0];
+        pos[name].size = arr[1];
+      }
+    }
+    if (rotated) pos[name].size.reverse();
+  }
+  return pos;
+}
+
+function makePartSprite(texture, bounds, tint){
+  const rect = new PIXI.Rectangle(bounds.pos[0], bounds.pos[1], bounds.size[0], bounds.size[1]);
+  const partTexture = new PIXI.Texture({ source: texture.source, frame: rect });
+  const sprite = new PIXI.Sprite(partTexture);
+  sprite.tint = tint;
+  sprite.anchor.set(0.5);
+  sprite.x = (bounds.spriteOffset ? bounds.spriteOffset[0] : 0);
+  sprite.y = -(bounds.spriteOffset ? bounds.spriteOffset[1] : 0);
+  return sprite;
+}
+
+async function main(){
   const params = new URLSearchParams(window.location.search);
-  const username = params.get("username");
   const type = params.get("form") || "cube";
-  const id = params.get("icon") || "1";
-  
-  // FIXED: Default missing color IDs to 1 (Red) and 3 (Yellow) instead of 0 (Grayscale)
-  const col1 = params.get("col1") || "1";
-  const col2 = params.get("col2") || "3";
+  const id = parseInt(params.get("icon")) || 1;
+  const col1 = parseInt(params.get("col1")) || 1;
+  const col2 = parseInt(params.get("col2")) || 3;
   const glowOn = params.get("glow") === "true";
 
-  const imgEl = document.getElementById("icon");
+  const apiRes = await fetch("https://gdbrowser.com/api/iconkit");
+  const apiData = await apiRes.json();
+  const colors = apiData.colors;
+  function toHex(colID){
+    let c = colors[colID];
+    return c ? (c.r<<16)+(c.g<<8)+c.b : WHITE;
+  }
 
-  let targetUrl;
-  if (username) {
-    targetUrl = `https://gdbrowser.com/icon/${encodeURIComponent(username)}`;
+  const form = formMap[type.toLowerCase()] || type.toLowerCase();
+  const iconStr = `${form}_${padZero(id)}`;
+
+  const app = new PIXI.Application();
+  await app.init({ width:150, height:150, backgroundAlpha:0 });
+  document.getElementById("iconWrap").appendChild(app.canvas);
+
+  const container = new PIXI.Container();
+
+  if (COMPLEX_FORMS.includes(form)){
+    // Robot/spider: Load unified body asset sheet
+    const robotData = apiData.robotAnimations;
+    const info = robotData.info[form];
+    const idleFrame = robotData.animations[form].idle.frames[0];
+
+    // Fetch the single plist & PNG sprite sheet for this robot/spider ID
+    const plistRes = await fetch(`https://gdbrowser.com/iconkit/icons/${iconStr}-uhd.plist`);
+    if (plistRes.ok) {
+      const framePos = parsePlist(await plistRes.text());
+      const texture = await PIXI.Assets.load(`https://gdbrowser.com/iconkit/icons/${iconStr}-uhd.png`);
+
+      const baseColor = toHex(col1);
+      const secColor = toHex(col2);
+
+      // Iterate over each limb/part defined in the idle frame
+      for (let partIndex = 0; partIndex < idleFrame.length; partIndex++){
+        const partData = idleFrame[partIndex];
+        const partNum = padZero(partData.part || (partIndex + 1));
+        
+        // Determine part specific color overrides if defined in animations info
+        const tintOverride = info.tints ? info.tints[partIndex] : null;
+        let pColor = baseColor;
+        let sColor = secColor;
+        if (tintOverride === 1) sColor = baseColor;
+        if (tintOverride === 2) pColor = secColor;
+
+        const partContainer = new PIXI.Container();
+
+        [
+          { suffix: `_${partNum}_glow_001.png`, color: glowOn ? sColor : null },
+          { suffix: `_${partNum}_2_001.png`, color: sColor },
+          { suffix: `_${partNum}_001.png`, color: pColor },
+          { suffix: `_${partNum}_extra_001.png`, color: WHITE }
+        ].forEach(layer => {
+          if (layer.color === null) return;
+          const frameName = `${iconStr}${layer.suffix}`;
+          const bounds = framePos[frameName];
+          if (!bounds) return;
+          partContainer.addChild(makePartSprite(texture, bounds, layer.color));
+        });
+
+        // Apply part transformations (position, rotation, scale, flip)
+        partContainer.x = partData.pos[0];
+        partContainer.y = -partData.pos[1];
+        partContainer.scale.x = partData.scale[0] * (partData.flipped[0] ? -1 : 1);
+        partContainer.scale.y = partData.scale[1] * (partData.flipped[1] ? -1 : 1);
+        partContainer.angle = partData.rotation;
+
+        container.addChild(partContainer);
+      }
+    }
   } else {
-    targetUrl = `https://gdbrowser.com/icon/icon?form=${type}&icon=${id}&col1=${col1}&col2=${col2}&glow=${glowOn}`;
+    // Simple single-layer forms
+    const plistRes = await fetch(`https://gdbrowser.com/iconkit/icons/${iconStr}-uhd.plist`);
+    const framePos = parsePlist(await plistRes.text());
+    const texture = await PIXI.Assets.load(`https://gdbrowser.com/iconkit/icons/${iconStr}-uhd.png`);
+
+    [
+      { suffix: "_glow_001.png", color: glowOn ? toHex(col2) : null },
+      { suffix: "_2_001.png", color: toHex(col2) },
+      { suffix: "_001.png", color: toHex(col1) },
+      { suffix: "_extra_001.png", color: WHITE }
+    ].forEach(layer => {
+      if (layer.color === null) return;
+      const frameName = iconStr + layer.suffix;
+      const bounds = framePos[frameName];
+      if (!bounds) return;
+      container.addChild(makePartSprite(texture, bounds, layer.color));
+    });
   }
 
-  // Pre-fetch trigger request
-  try {
-    await fetch(targetUrl, { mode: 'no-cors' });
-  } catch (e) {
-    // Ignore trigger fetch error
-  }
-
-  // Set image source
-  imgEl.src = targetUrl;
+  container.x = 75; container.y = 75;
+  container.angle = -90;
+  app.stage.addChild(container);
 }
 
 main();
