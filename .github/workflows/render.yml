@@ -1,1 +1,58 @@
-
+name: Render icons
+ 
+on:
+  repository_dispatch:
+    types: [render-icons]
+  workflow_dispatch:
+    inputs:
+      jobs:
+        description: 'JSON array, e.g. [{"form":"robot","icon":24,"col1":98,"col2":83,"glow":true}]'
+        required: true
+ 
+permissions:
+  contents: write
+ 
+# One run at a time so commits to the renders folder never collide
+concurrency:
+  group: render-icons
+  cancel-in-progress: false
+ 
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+ 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+ 
+      - name: Install dependencies
+        working-directory: render
+        run: |
+          npm install
+          npx playwright install --with-deps chromium
+ 
+      - name: Serve the site locally
+        run: |
+          python3 -m http.server 8080 &
+          sleep 2
+ 
+      - name: Render GIFs
+        working-directory: render
+        env:
+          JOBS: ${{ github.event_name == 'repository_dispatch' && toJson(github.event.client_payload.jobs) || github.event.inputs.jobs }}
+          OUT_DIR: ${{ github.workspace }}/renders
+        run: node capture.mjs
+ 
+      - name: Commit renders
+        if: always()
+        run: |
+          git config user.name "gd-icon-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add renders || true
+          git diff --cached --quiet && exit 0
+          git commit -m "Render icons"
+          git pull --rebase --autostash
+          git push
