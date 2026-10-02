@@ -2,7 +2,7 @@ name: Render icons
  
 on:
   repository_dispatch:
-    types: [render-icons]
+    types: [render-icons, prune-icons]
   workflow_dispatch:
     inputs:
       jobs:
@@ -12,17 +12,15 @@ on:
 permissions:
   contents: write
  
-# One run at a time so commits to the renders folder never collide
-concurrency:
-  group: render-icons
-  cancel-in-progress: false
- 
 jobs:
   render:
+    if: github.event_name == 'workflow_dispatch' || github.event.action == 'render-icons'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history, so file ages are available for pruning
  
       - uses: actions/setup-node@v4
         with:
@@ -46,6 +44,18 @@ jobs:
           OUT_DIR: ${{ github.workspace }}/renders
         run: node capture.mjs
  
+      - name: Prune old renders
+        if: always()
+        env:
+          KEEP_DAYS: "2"
+        run: |
+          cutoff=$(date -d "$KEEP_DAYS days ago" +%s)
+          for f in renders/*.gif; do
+            [ -e "$f" ] || continue
+            ts=$(git log -1 --format=%ct -- "$f")
+            if [ -n "$ts" ] && [ "$ts" -lt "$cutoff" ]; then git rm -q "$f"; fi
+          done
+ 
       - name: Commit renders
         if: always()
         run: |
@@ -53,6 +63,43 @@ jobs:
           git config user.email "actions@users.noreply.github.com"
           git add renders || true
           git diff --cached --quiet && exit 0
-          git commit -m "Render icons"
-          git pull --rebase --autostash
-          git push
+          git commit -m "Update renders"
+          # Several runs can overlap now, so retry the push if another run got there first
+          for i in 1 2 3 4 5; do
+            if git pull --rebase --autostash && git push; then exit 0; fi
+            git rebase --abort 2>/dev/null || true
+            sleep $((RANDOM % 6 + 2))
+          done
+          exit 1
+ 
+  # Deletes GIFs the sheet has already copied into itself
+  prune:
+    if: github.event.action == 'prune-icons'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+ 
+      - name: Delete requested renders
+        env:
+          FILES: ${{ toJson(github.event.client_payload.files) }}
+        run: |
+          echo "$FILES" | jq -r '.[]' | while read -r name; do
+            if [[ "$name" =~ ^[a-z]+-[0-9]+-[0-9]+-[0-9]+-[01]-t\.gif$ ]] && [ -f "renders/$name" ]; then
+              git rm -q "renders/$name"
+            fi
+          done
+ 
+      - name: Commit deletions
+        run: |
+          git config user.name "gd-icon-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git diff --cached --quiet && exit 0
+          git commit -m "Remove placed renders"
+          for i in 1 2 3 4 5; do
+            if git pull --rebase --autostash && git push; then exit 0; fi
+            git rebase --abort 2>/dev/null || true
+            sleep $((RANDOM % 6 + 2))
+          done
+          exit 1
+ 
