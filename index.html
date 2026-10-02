@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <title>GD Icon Render</title>
 <style>
-  html, body { margin:0; padding:0; width:300px; height:300px; background: transparent; display:flex; align-items:center; justify-content:center; overflow:hidden; }
+  html, body { margin:0; padding:0; width:300px; height:300px; background:#000; display:flex; align-items:center; justify-content:center; overflow:hidden; }
   #iconWrap { animation: bob 1.6s ease-in-out infinite; }
   @keyframes bob { 0%{transform:translateY(0px);} 50%{transform:translateY(-15px);} 100%{transform:translateY(0px);} }
 </style>
@@ -30,8 +30,9 @@ const SHOW_DOME   = Q.get("dome") === "1"; // draw the _3_001 layer (ship/ufo gl
 const CANVAS      = num("canvas", 270);    // canvas size in px (page is 300 tall, bob moves up 15)
 const PAD         = num("pad", 6);         // keep-clear margin so nothing touches the edge
 const ZOOM        = num("zoom", 1);        // optional manual size multiplier
-if (/^[0-9a-fA-F]{6}$/.test(Q.get("bg") || "")) {  // &bg=ffffff changes the background
-  document.documentElement.style.background = document.body.style.background = "#" + Q.get("bg");
+const BGP = Q.get("bg") || "";   // &bg=ffffff for a color, &bg=transparent for none
+if (BGP === "transparent" || /^[0-9a-fA-F]{6}$/.test(BGP)) {
+  document.documentElement.style.background = document.body.style.background = BGP === "transparent" ? "transparent" : "#" + BGP;
 }
  
 // ---------- helpers ----------
